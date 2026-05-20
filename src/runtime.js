@@ -55,6 +55,16 @@ function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function appendJsonArrayRecord(path, key, record, match) {
+  const existing = readJson(path, { version: 1, [key]: [] });
+  const values = Array.isArray(existing[key]) ? existing[key] : [];
+  const index = values.findIndex(match);
+  const nextValues = index >= 0
+    ? values.map((value, valueIndex) => valueIndex === index ? { ...value, ...record } : value)
+    : [...values, record];
+  writeJson(path, { ...existing, [key]: nextValues });
+}
+
 function normalizeDiscordId(value, { allowAlias = true } = {}) {
   const text = firstString(value);
   if (!text) return undefined;
@@ -465,6 +475,105 @@ function buildOnboardingVisiblePrompt(input) {
   ].join("\n");
 }
 
+function isSubstantiveOnboardingText(content) {
+  const text = String(content ?? "").trim();
+  if (!text) return false;
+  if (/^(hi|hello|hey|test|ping|在吗)[.!。！?？\s]*$/i.test(text)) return false;
+  return text.length >= 12 || text.includes("\n") || /(目标|讨论|维护|研究|项目|一起|刷|公司|意识|人工智能|西部世界|west\s*world|westworld|ai)/i.test(text);
+}
+
+function inferOnboardingGroup(input, state = {}) {
+  const content = String(input.content ?? "").trim();
+  const slugMatch = content.match(/(?:^|\n)\s*slug\s*[:：]\s*([a-z0-9][a-z0-9-]{1,60})\s*(?:\n|$)/i);
+  const nameMatch = content.match(/(?:群名称|name)\s*[:：]\s*([^\n]{2,80})/i);
+  const isWestworld = /(西部世界|west\s*world|westworld)/i.test(content);
+  const fallbackSlug = `group-${String(input.channelId ?? "unknown").slice(-6)}`;
+  const slug = safeSlug(slugMatch?.[1] ?? state.slug ?? (isWestworld ? "westworld" : fallbackSlug));
+  const name = firstString(nameMatch?.[1], state.name, isWestworld ? "Westworld Watch Club" : `Group ${String(input.channelId ?? "unknown").slice(-6)}`);
+  const oneLineGoal = isWestworld
+    ? "Watch Westworld together and use concrete episode context to discuss AI, consciousness, agency, and product implications."
+    : `Maintain a focused group workspace around: ${content.split(/\r?\n/).find((line) => line.trim())?.trim().slice(0, 160) ?? "the confirmed group topic"}.`;
+  return {
+    slug,
+    name,
+    channelId: input.channelId,
+    doc: `workspace/groups/${slug}/IDENTITY.md`,
+    oneLineGoal,
+    northStar: isWestworld
+      ? "Useful episode discussions that connect scenes to clear AI/consciousness questions or reusable notes."
+      : "Useful group conversations that produce clear notes, decisions, or next actions.",
+    operatingMetrics: isWestworld
+      ? [
+          "Discussions tied to specific episodes, scenes, or concepts.",
+          "Follow-up questions or notes that sharpen AI/consciousness thinking."
+        ]
+      : [
+          "Messages that clarify the question, context, and next step.",
+          "Useful notes or decisions captured when the group converges."
+        ],
+    guardrailMetrics: isWestworld
+      ? [
+          "Vague philosophy detached from episode evidence.",
+          "Spoilers beyond the current discussion context without warning."
+        ]
+      : [
+          "Unclear group purpose after onboarding.",
+          "Uncaptured decisions or repeated context resets."
+        ]
+  };
+}
+
+function writeGroupWorkspace(root, group) {
+  const dir = resolve(root, "workspace/groups", group.slug);
+  mkdirSync(resolve(dir, "sessions"), { recursive: true });
+  const identity = [
+    `# ${group.name}`,
+    "",
+    `Channel ID: ${group.channelId}`,
+    "",
+    "## One-Line Goal",
+    "",
+    group.oneLineGoal,
+    "",
+    "## North Star",
+    "",
+    group.northStar,
+    "",
+    "## Operating Metrics",
+    "",
+    ...group.operatingMetrics.map((metric) => `- ${metric}`),
+    "",
+    "## Guardrail Metrics",
+    "",
+    ...group.guardrailMetrics.map((metric) => `- ${metric}`),
+    ""
+  ].join("\n");
+  writeFileSync(resolve(dir, "IDENTITY.md"), identity);
+  for (const file of ["AGENTS.md", "HEARTBEAT.md", "MEMORY.md", "SOUL.md", "USER.md"]) {
+    const path = resolve(dir, file);
+    if (!existsSync(path)) writeFileSync(path, `# ${group.name}\n\nSee IDENTITY.md for the current group contract.\n`);
+  }
+  const sessionsPath = resolve(dir, "sessions/sessions.json");
+  if (!existsSync(sessionsPath)) writeJson(sessionsPath, { version: 1, sessions: [] });
+  const gitkeep = resolve(dir, "sessions/.gitkeep");
+  if (!existsSync(gitkeep)) writeFileSync(gitkeep, "");
+}
+
+function buildOnboardingConfiguredPrompt(group) {
+  return [
+    `已初始化 ${group.name}（${group.slug}）。`,
+    "",
+    `目标：${group.oneLineGoal}`,
+    `North Star：${group.northStar}`,
+    "",
+    "之后这个群会按这个目标组织讨论；要改目标，直接说“修改群目标”。"
+  ].join("\n");
+}
+
+function buildOnboardingReminderPrompt() {
+  return "这个群还在等待目标确认。请发一句话目标、North Star、两个运营指标和两个护栏指标；如果让我定，可以直接说主题和“其他你定”。";
+}
+
 export function recordDiscordRawIngress({ root, event = {}, accountId, config = {} }) {
   const normalizedConfig = normalizePluginConfig(config);
   if (!normalizedConfig.onboarding) return { handled: false, reason: "onboarding disabled" };
@@ -481,6 +590,10 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
   const statePath = resolve(onboardingDir, `${input.channelId}.json`);
   const previous = readJson(statePath, null);
   const now = new Date().toISOString();
+  const hostAccountId = normalizedConfig.hostAccountId;
+  if (previous && accountId !== hostAccountId) {
+    return { handled: true, mapped: false, created: false, path: statePath, state: previous, input };
+  }
   const state = previous ?? {
     version: 1,
     status: "pending_goal",
@@ -498,12 +611,32 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
   state.lastMessageId = input.messageId;
   state.lastSeenByAccountId = accountId;
 
-  const hostAccountId = normalizedConfig.hostAccountId;
   const shouldPrompt = accountId === hostAccountId && !state.promptedAt && input.authorType !== "bot";
+  let visiblePrompt;
   if (shouldPrompt) {
     state.promptedAt = now;
     state.promptedByAccountId = accountId;
     state.promptedForMessageId = input.messageId;
+    visiblePrompt = buildOnboardingVisiblePrompt(input);
+  } else if (accountId === hostAccountId && input.authorType !== "bot" && state.status === "pending_goal" && state.promptedAt) {
+    if (isSubstantiveOnboardingText(input.content)) {
+      const groupRecord = inferOnboardingGroup(input, state);
+      appendJsonArrayRecord(resolvePath(root, normalizedConfig.goalsFile), "groups", groupRecord, (group) => firstString(group.channelId) === input.channelId || safeSlug(group.slug) === groupRecord.slug);
+      writeGroupWorkspace(root, groupRecord);
+      state.status = "configured";
+      state.completedAt = now;
+      state.groupSlug = groupRecord.slug;
+      state.groupName = groupRecord.name;
+      state.goalMessageId = input.messageId;
+      state.goalMessagePreview = String(input.content ?? "").slice(0, 500);
+      visiblePrompt = buildOnboardingConfiguredPrompt(groupRecord);
+    } else {
+      const lastReminderAt = Date.parse(state.lastReminderAt ?? "");
+      if (!Number.isFinite(lastReminderAt) || Date.now() - lastReminderAt > 10 * 60 * 1000) {
+        state.lastReminderAt = now;
+        visiblePrompt = buildOnboardingReminderPrompt();
+      }
+    }
   }
   writeJson(statePath, state);
 
@@ -514,7 +647,7 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
     path: statePath,
     state,
     input,
-    visiblePrompt: shouldPrompt ? buildOnboardingVisiblePrompt(input) : undefined
+    visiblePrompt
   };
 }
 

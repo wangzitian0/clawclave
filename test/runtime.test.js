@@ -158,7 +158,67 @@ test("raw ingress creates onboarding state and prompts only from host account", 
     const host = recordDiscordRawIngress({ root, event: { ...event, id: "raw-2" }, accountId: "tianclaw" });
     assert.match(host.visiblePrompt, /这个群还没有初始化目标/);
     const again = recordDiscordRawIngress({ root, event: { ...event, id: "raw-3" }, accountId: "tianclaw" });
-    assert.equal(again.visiblePrompt, undefined);
+    assert.match(again.visiblePrompt, /等待目标确认/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("raw ingress configures pending group from substantive host reply", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const event = {
+      id: "raw-1",
+      guild_id: "g1",
+      channel_id: "1506560974281248881",
+      timestamp: "2026-05-20T00:00:00.000Z",
+      content: "hi",
+      author: { id: "u1", username: "tester" }
+    };
+    recordDiscordRawIngress({ root, event, accountId: "tianclaw" });
+    const configured = recordDiscordRawIngress({
+      root,
+      event: {
+        ...event,
+        id: "raw-2",
+        content: "一起刷西部世界电视剧\n讨论人工智能和“意识”的本质\n其他的你定吧"
+      },
+      accountId: "tianclaw"
+    });
+    assert.match(configured.visiblePrompt, /已初始化 Westworld Watch Club/);
+    const goals = JSON.parse(readFileSync(resolve(root, "workspace/groups/company-goals.json"), "utf8"));
+    const group = goals.groups.find((entry) => entry.slug === "westworld");
+    assert.equal(group.channelId, "1506560974281248881");
+    assert.match(group.oneLineGoal, /Westworld/);
+    assert.equal(existsSync(resolve(root, "workspace/groups/westworld/IDENTITY.md")), true);
+    const state = JSON.parse(readFileSync(resolve(root, "workspace/groups/onboarding/active/1506560974281248881.json"), "utf8"));
+    assert.equal(state.status, "configured");
+    assert.equal(state.groupSlug, "westworld");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("raw ingress reminds pending host without letting non-host overwrite state", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const event = {
+      id: "raw-1",
+      guild_id: "g1",
+      channel_id: "999",
+      timestamp: "2026-05-20T00:00:00.000Z",
+      content: "hi",
+      author: { id: "u1", username: "tester" }
+    };
+    recordDiscordRawIngress({ root, event, accountId: "tianclaw" });
+    const reminder = recordDiscordRawIngress({ root, event: { ...event, id: "raw-2" }, accountId: "tianclaw" });
+    assert.match(reminder.visiblePrompt, /等待目标确认/);
+    const nonHost = recordDiscordRawIngress({ root, event: { ...event, id: "raw-3", content: "anything" }, accountId: "linus" });
+    assert.equal(nonHost.visiblePrompt, undefined);
+    const state = JSON.parse(readFileSync(resolve(root, "workspace/groups/onboarding/active/999.json"), "utf8"));
+    assert.equal(state.lastSeenByAccountId, "tianclaw");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
