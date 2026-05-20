@@ -582,6 +582,29 @@ function buildHostedTurnContext({ state, accountId }) {
   ].join("\n");
 }
 
+function buildHostRosterContext({ root, config, accountId }) {
+  if (!config.hostedTurns || accountId !== config.hostAccountId) return "";
+  const roles = loadAgentRoleMap(root, config)
+    .filter((role) => firstString(role.accountId) && firstString(role.accountId) !== config.hostAccountId)
+    .map((role) => {
+      const accountId = firstString(role.accountId);
+      const displayName = firstString(role.displayName, role.roleName, role.accountId);
+      const botUserId = firstString(role.botUserId);
+      const roleId = firstString(role.roleId);
+      const mention = botUserId ? `<@${botUserId}>` : "";
+      const roleMention = roleId ? `<@&${roleId}>` : "";
+      return `- ${displayName} (${accountId}): ${mention}${roleMention ? ` / ${roleMention}` : ""}`;
+    });
+  if (roles.length === 0) return "";
+  return [
+    "<clawclave_host_roster>",
+    "When hosting a discussion, contest, research check, or participation event, invite agents with these exact Discord mentions. Plain @name text is not a ping and does not open hosted state.",
+    "Do not ask the human to mention experts directly. Do not mention participants again in a summary unless intentionally opening a new round.",
+    ...roles,
+    "</clawclave_host_roster>"
+  ].join("\n");
+}
+
 function buildUnmappedContext({ ids, onboardingState }) {
   return [
     `<clawclave_unmapped_channel channel_id="${ids.channelId ?? ""}" guild_id="${ids.guildId ?? ""}">`,
@@ -616,7 +639,13 @@ export function buildPromptHookDecision({ root, event = {}, ctx = {}, config = {
     state: hostedTurn,
     accountId: firstString(ctx.agentId, ctx.agent_id, event.agentId, event.agent_id)
   });
-  const text = [groupText, hostedTurnText].filter(Boolean).join("\n\n");
+  const accountId = firstString(ctx.agentId, ctx.agent_id, event.agentId, event.agent_id);
+  const hostRosterText = buildHostRosterContext({
+    root,
+    config: normalizedConfig,
+    accountId
+  });
+  const text = [groupText, hostedTurnText, hostRosterText].filter(Boolean).join("\n\n");
 
   return {
     decision: { appendSystemContext: text },

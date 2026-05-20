@@ -82,6 +82,44 @@ test("buildPromptHookDecision injects mapped group context", () => {
   }
 });
 
+test("buildPromptHookDecision injects host roster for TianClaws before hosted state exists", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    mkdirSync(resolve(root, "workspace/agents"), { recursive: true });
+    writeFileSync(
+      resolve(root, "workspace/agents/discord-agent-roles.json"),
+      `${JSON.stringify({
+        roles: [
+          {
+            accountId: "linus",
+            displayName: "Linus Torvalds",
+            botUserId: "1478055078140182690",
+            roleId: "1478057217365250051"
+          },
+          {
+            accountId: "tianclaw",
+            displayName: "TianClaws",
+            botUserId: "1476901813792931994",
+            roleId: "1478057919525290159"
+          }
+        ]
+      }, null, 2)}\n`
+    );
+    const result = buildPromptHookDecision({
+      root,
+      event: {},
+      ctx: { messageProvider: "discord", channelId: "123", agentId: "tianclaw" }
+    });
+    assert.match(result.decision.appendSystemContext, /clawclave_host_roster/);
+    assert.match(result.decision.appendSystemContext, /<@1478055078140182690>/);
+    assert.match(result.decision.appendSystemContext, /Plain @name text is not a ping/);
+    assert.doesNotMatch(result.decision.appendSystemContext, /1476901813792931994/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("unmapped Discord channels create onboarding state", () => {
   const root = tempRoot();
   try {
