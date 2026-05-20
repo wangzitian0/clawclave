@@ -22,6 +22,9 @@
       "onboardingDir": {
         "type": "string"
       },
+      "hostAccountId": {
+        "type": "string"
+      },
       "promptContext": {
         "type": "boolean"
       },
@@ -54,6 +57,10 @@
     "onboardingDir": {
       "label": "Onboarding state directory",
       "help": "Relative to rootDir unless absolute. Default: workspace/groups/onboarding/active."
+    },
+    "hostAccountId": {
+      "label": "Host Discord account ID",
+      "help": "Only this OpenClaw Discord account sends visible onboarding prompts. Default: tianclaw."
     },
     "promptContext": {
       "label": "Inject group context",

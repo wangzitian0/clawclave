@@ -12,6 +12,7 @@
           "goalsFile": "workspace/groups/company-goals.json",
           "memoryDir": "memory/clawclave",
           "onboardingDir": "workspace/groups/onboarding/active",
+          "hostAccountId": "tianclaw",
           "promptContext": true,
           "transcriptWriter": true,
           "onboarding": true,

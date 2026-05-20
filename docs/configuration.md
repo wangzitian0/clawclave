@@ -11,6 +11,7 @@ Clawclave is configured from the `plugins.entries.clawclave.config` object in
   "goalsFile": "workspace/groups/company-goals.json",
   "memoryDir": "memory/clawclave",
   "onboardingDir": "workspace/groups/onboarding/active",
+  "hostAccountId": "tianclaw",
   "promptContext": true,
   "transcriptWriter": true,
   "onboarding": true,
@@ -37,6 +38,12 @@ Base directory for normalized transcript JSONL.
 `onboardingDir`
 
 Directory where unmapped Discord channels get pending onboarding state.
+
+`hostAccountId`
+
+OpenClaw Discord account that is allowed to send a visible onboarding prompt.
+This avoids every bot in a multi-account Discord server asking the same
+question. Default: `tianclaw`.
 
 `promptContext`
 

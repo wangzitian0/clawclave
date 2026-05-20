@@ -5,6 +5,7 @@ const DEFAULT_CONFIG = {
   goalsFile: "workspace/groups/company-goals.json",
   memoryDir: "memory/clawclave",
   onboardingDir: "workspace/groups/onboarding/active",
+  hostAccountId: "tianclaw",
   promptContext: true,
   transcriptWriter: true,
   onboarding: true,
@@ -88,6 +89,7 @@ export function normalizePluginConfig(value = {}) {
     goalsFile: firstString(config.goalsFile) ?? DEFAULT_CONFIG.goalsFile,
     memoryDir: firstString(config.memoryDir) ?? DEFAULT_CONFIG.memoryDir,
     onboardingDir: firstString(config.onboardingDir) ?? DEFAULT_CONFIG.onboardingDir,
+    hostAccountId: firstString(config.hostAccountId) ?? DEFAULT_CONFIG.hostAccountId,
     promptContext: config.promptContext !== false,
     transcriptWriter: config.transcriptWriter !== false,
     onboarding: config.onboarding !== false,
@@ -158,6 +160,36 @@ export function resolveDiscordIds(event = {}, ctx = {}) {
   };
 }
 
+function readDiscordRawMessageData(event = {}) {
+  try {
+    const raw = event?.message?.rawData;
+    if (raw && typeof raw === "object") return raw;
+  } catch {
+    return {};
+  }
+  return isObject(event) ? event : {};
+}
+
+function buildRawIngressInput({ event = {}, accountId }) {
+  const raw = readDiscordRawMessageData(event);
+  const content = typeof raw.content === "string" ? raw.content : firstString(event.content);
+  return {
+    version: 1,
+    timestamp: firstString(raw.timestamp, event.timestamp) ?? new Date().toISOString(),
+    direction: "inbound",
+    provider: "discord",
+    source: "discord-raw-ingress",
+    accountId,
+    guildId: firstString(raw.guild_id, event.guild_id, event.guildId),
+    channelId: firstString(raw.channel_id, event.channel_id, event.channelId),
+    messageId: firstString(raw.id, event.id, event.messageId),
+    authorId: firstString(raw.author?.id, event.author?.id),
+    authorLabel: firstString(raw.author?.global_name, raw.author?.username, event.author?.globalName, event.author?.username),
+    authorType: raw.author?.bot ? "bot" : "human",
+    content: content ?? ""
+  };
+}
+
 export function resolveGroup(goals, ids = {}) {
   const channelId = ids.channelId;
   if (!channelId) return null;
@@ -216,6 +248,73 @@ export function ensureOnboardingState({ root, config, ids, event = {}, group }) 
   };
   writeJson(path, state);
   return { created: true, path, state };
+}
+
+function buildOnboardingVisiblePrompt(input) {
+  return [
+    "这个群还没有初始化目标。我先建一个 onboarding 记录。",
+    "",
+    "请确认这几个字段：",
+    "1. slug（小写短横线，例如 westworld）",
+    "2. 群名称",
+    "3. 一句话目标",
+    "4. North Star",
+    "5. 两个运营指标",
+    "6. 两个护栏指标"
+  ].join("\n");
+}
+
+export function recordDiscordRawIngress({ root, event = {}, accountId, config = {} }) {
+  const normalizedConfig = normalizePluginConfig(config);
+  if (!normalizedConfig.onboarding) return { handled: false, reason: "onboarding disabled" };
+  const input = buildRawIngressInput({ event, accountId });
+  if (!input.guildId || !input.channelId || !input.messageId) {
+    return { handled: false, reason: "not a guild channel message", input };
+  }
+
+  const goals = loadGoals(root, normalizedConfig);
+  const group = resolveGroup(goals, input);
+  if (group) return { handled: true, mapped: true, groupSlug: group.slug, input };
+
+  const onboardingDir = resolvePath(root, normalizedConfig.onboardingDir);
+  const statePath = resolve(onboardingDir, `${input.channelId}.json`);
+  const previous = readJson(statePath, null);
+  const now = new Date().toISOString();
+  const state = previous ?? {
+    version: 1,
+    status: "pending_goal",
+    provider: "discord",
+    guildId: input.guildId,
+    channelId: input.channelId,
+    firstSeenAt: now,
+    firstMessageId: input.messageId,
+    firstMessagePreview: String(input.content ?? "").slice(0, 240),
+    requiredFields: ["slug", "name", "oneLineGoal", "northStar", "operatingMetrics", "guardrailMetrics"]
+  };
+
+  state.updatedAt = now;
+  state.lastSeenAt = now;
+  state.lastMessageId = input.messageId;
+  state.lastSeenByAccountId = accountId;
+
+  const hostAccountId = normalizedConfig.hostAccountId;
+  const shouldPrompt = accountId === hostAccountId && !state.promptedAt && input.authorType !== "bot";
+  if (shouldPrompt) {
+    state.promptedAt = now;
+    state.promptedByAccountId = accountId;
+    state.promptedForMessageId = input.messageId;
+  }
+  writeJson(statePath, state);
+
+  return {
+    handled: true,
+    mapped: false,
+    created: !previous,
+    path: statePath,
+    state,
+    input,
+    visiblePrompt: shouldPrompt ? buildOnboardingVisiblePrompt(input) : undefined
+  };
 }
 
 export function appendHookTranscriptEvent({ root, event = {}, ctx = {}, config = {}, direction = "inbound" }) {

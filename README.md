@@ -49,6 +49,7 @@ Then add it to `openclaw.json`:
         "config": {
           "rootDir": "~/.openclaw",
           "goalsFile": "workspace/groups/company-goals.json",
+          "hostAccountId": "tianclaw",
           "promptContext": true,
           "transcriptWriter": true,
           "onboarding": true,
@@ -104,7 +105,8 @@ When Clawclave sees a Discord channel that is not listed in the goals file, it:
 
 1. Creates a pending onboarding record.
 2. Injects onboarding instructions into the next OpenClaw prompt.
-3. Tells the host agent to ask for:
+3. Lets one configured host account send the visible onboarding question.
+4. Tells the host agent to ask for:
    - one-line goal
    - north star
    - two operating metrics

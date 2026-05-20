@@ -11,6 +11,9 @@ configured goals file.
 4. If the channel is mapped, the group goal context is injected.
 5. If the channel is unmapped, Clawclave creates pending onboarding state and
    injects onboarding instructions.
+6. If raw Discord ingress integration is installed, the configured host account
+   can also send the visible onboarding question before the normal OpenClaw
+   preflight path runs.
 
 ## Pending State
 

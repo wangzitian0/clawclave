@@ -8,6 +8,7 @@ import {
   appendHookTranscriptEvent,
   buildPromptHookDecision,
   normalizePluginConfig,
+  recordDiscordRawIngress,
   resolveDiscordIds
 } from "../src/runtime.js";
 
@@ -42,6 +43,7 @@ test("normalizePluginConfig uses marketplace-safe defaults", () => {
     goalsFile: "workspace/groups/company-goals.json",
     memoryDir: "memory/clawclave",
     onboardingDir: "workspace/groups/onboarding/active",
+    hostAccountId: "tianclaw",
     promptContext: true,
     transcriptWriter: true,
     onboarding: true,
@@ -88,6 +90,30 @@ test("unmapped Discord channels create onboarding state", () => {
     const statePath = resolve(root, "workspace/groups/onboarding/active/999.json");
     assert.equal(existsSync(statePath), true);
     assert.match(readFileSync(statePath, "utf8"), /pending_goal/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("raw ingress creates onboarding state and prompts only from host account", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const event = {
+      id: "raw-1",
+      guild_id: "g1",
+      channel_id: "999",
+      timestamp: "2026-05-20T00:00:00.000Z",
+      content: "hi",
+      author: { id: "u1", username: "tester" }
+    };
+    const nonHost = recordDiscordRawIngress({ root, event, accountId: "other" });
+    assert.equal(nonHost.handled, true);
+    assert.equal(nonHost.visiblePrompt, undefined);
+    const host = recordDiscordRawIngress({ root, event: { ...event, id: "raw-2" }, accountId: "tianclaw" });
+    assert.match(host.visiblePrompt, /这个群还没有初始化目标/);
+    const again = recordDiscordRawIngress({ root, event: { ...event, id: "raw-3" }, accountId: "tianclaw" });
+    assert.equal(again.visiblePrompt, undefined);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
