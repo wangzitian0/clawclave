@@ -114,6 +114,7 @@ test("buildPromptHookDecision injects host roster for TianClaws before hosted st
     assert.match(result.decision.appendSystemContext, /clawclave_host_roster/);
     assert.match(result.decision.appendSystemContext, /<@1478055078140182690>/);
     assert.match(result.decision.appendSystemContext, /Plain @name text is not a ping/);
+    assert.match(result.decision.appendSystemContext, /direct mention has priority/);
     assert.doesNotMatch(result.decision.appendSystemContext, /1476901813792931994/);
   } finally {
     rmSync(root, { recursive: true, force: true });

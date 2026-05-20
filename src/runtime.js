@@ -599,6 +599,7 @@ function buildHostRosterContext({ root, config, accountId }) {
   return [
     "<clawclave_host_roster>",
     "When hosting a discussion, contest, research check, or participation event, invite agents with these exact Discord mentions. Plain @name text is not a ping and does not open hosted state.",
+    "If a human directly mentions an agent, that direct mention has priority for that agent. As host, do not repeat direct human pings; stay quiet or coordinate only when the human asked TianClaws to host, summarize, route, or reduce noise.",
     "Do not ask the human to mention experts directly. Do not mention participants again in a summary unless intentionally opening a new round.",
     ...roles,
     "</clawclave_host_roster>"
