@@ -1,0 +1,66 @@
+{
+  "name": "clawclave",
+  "version": "0.1.0",
+  "description": "Discord group operations and onboarding for OpenClaw agent teams.",
+  "type": "module",
+  "license": "MIT",
+  "author": "wangzitian0",
+  "homepage": "https://github.com/wangzitian0/clawclave#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/wangzitian0/clawclave.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wangzitian0/clawclave/issues"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "discord",
+    "discord-bot",
+    "ai-agents",
+    "agent-orchestration",
+    "group-onboarding",
+    "discord-community",
+    "transcript-memory"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./runtime": "./src/runtime.js"
+  },
+  "files": [
+    "index.js",
+    "src",
+    "docs",
+    "examples",
+    "openclaw.plugin.json",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check index.js && node --check src/runtime.js"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.5.3"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

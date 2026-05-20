@@ -1,0 +1,75 @@
+{
+  "id": "clawclave",
+  "name": "Clawclave",
+  "description": "Discord group operations, onboarding state, and prompt context for OpenClaw agent teams.",
+  "version": "0.1.0",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "rootDir": {
+        "type": "string"
+      },
+      "goalsFile": {
+        "type": "string"
+      },
+      "memoryDir": {
+        "type": "string"
+      },
+      "onboardingDir": {
+        "type": "string"
+      },
+      "promptContext": {
+        "type": "boolean"
+      },
+      "transcriptWriter": {
+        "type": "boolean"
+      },
+      "onboarding": {
+        "type": "boolean"
+      },
+      "tailEvents": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 50
+      }
+    }
+  },
+  "uiHints": {
+    "rootDir": {
+      "label": "OpenClaw data root",
+      "help": "Defaults to the parent OpenClaw data root when available."
+    },
+    "goalsFile": {
+      "label": "Group goals file",
+      "help": "Relative to rootDir unless absolute. Default: workspace/groups/company-goals.json."
+    },
+    "memoryDir": {
+      "label": "Transcript memory directory",
+      "help": "Relative to rootDir unless absolute. Default: memory/clawclave."
+    },
+    "onboardingDir": {
+      "label": "Onboarding state directory",
+      "help": "Relative to rootDir unless absolute. Default: workspace/groups/onboarding/active."
+    },
+    "promptContext": {
+      "label": "Inject group context",
+      "help": "When true, Discord group runs receive group goal and onboarding context."
+    },
+    "transcriptWriter": {
+      "label": "Record normalized transcripts",
+      "help": "When true, Discord message hooks append normalized JSONL transcript events."
+    },
+    "onboarding": {
+      "label": "Track unmapped channels",
+      "help": "When true, unmapped Discord channels create pending onboarding state."
+    },
+    "tailEvents": {
+      "label": "Transcript tail events",
+      "help": "Maximum recent transcript events to inject into prompt context."
+    }
+  }
+}
