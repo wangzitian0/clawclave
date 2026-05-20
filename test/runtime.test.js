@@ -43,10 +43,16 @@ test("normalizePluginConfig uses marketplace-safe defaults", () => {
     goalsFile: "workspace/groups/company-goals.json",
     memoryDir: "memory/clawclave",
     onboardingDir: "workspace/groups/onboarding/active",
+    hostedTurnsDir: "workspace/groups/discussions/active",
+    eventsDir: "workspace/groups/discussions/events",
+    agentRoleMapFile: "workspace/agents/discord-agent-roles.json",
     hostAccountId: "tianclaw",
     promptContext: true,
     transcriptWriter: true,
     onboarding: true,
+    hostedTurns: true,
+    hostedTurnMinWaitSeconds: 45,
+    hostedTurnMaxWaitSeconds: 120,
     tailEvents: 50
   });
 });
@@ -132,6 +138,89 @@ test("transcript writer records normalized outbound events", () => {
     assert.equal(result.groupSlug, "ops");
     assert.match(readFileSync(result.file, "utf8"), /"direction":"outbound"/);
     assert.match(readFileSync(result.file, "utf8"), /"agentId":"host"/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("host outbound expert mentions create hosted turn state", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    mkdirSync(resolve(root, "workspace/agents"), { recursive: true });
+    writeFileSync(
+      resolve(root, "workspace/agents/discord-agent-roles.json"),
+      `${JSON.stringify({
+        roles: [
+          {
+            accountId: "linus",
+            displayName: "Linus Torvalds",
+            botUserId: "1478055078140182690",
+            roleId: "1478057217365250051"
+          },
+          {
+            accountId: "tianclaw",
+            displayName: "TianClaws",
+            botUserId: "bot-host",
+            roleId: "role-host"
+          }
+        ]
+      }, null, 2)}\n`
+    );
+    const result = appendHookTranscriptEvent({
+      root,
+      event: { content: "本轮请 <@1478055078140182690> 看一下技术风险，回复一次。", messageId: "m-host", metadata: { originatingTo: "123" } },
+      ctx: { channelId: "discord", agentId: "tianclaw" },
+      direction: "outbound"
+    });
+    assert.equal(result.hostedTurn.opened, true);
+    const statePath = resolve(root, "workspace/groups/discussions/active/123.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    assert.equal(state.status, "open");
+    assert.deepEqual(state.expectedAgents.map((agent) => agent.accountId), ["linus"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("expected bot inbound reply is recorded against hosted turn", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    mkdirSync(resolve(root, "workspace/agents"), { recursive: true });
+    writeFileSync(
+      resolve(root, "workspace/agents/discord-agent-roles.json"),
+      `${JSON.stringify({
+        roles: [
+          {
+            accountId: "linus",
+            displayName: "Linus Torvalds",
+            botUserId: "1478055078140182690",
+            roleId: "1478057217365250051"
+          }
+        ]
+      }, null, 2)}\n`
+    );
+    appendHookTranscriptEvent({
+      root,
+      event: { content: "本轮请 <@1478055078140182690> 回复一次。", messageId: "m-host", metadata: { originatingTo: "123" } },
+      ctx: { channelId: "discord", agentId: "tianclaw" },
+      direction: "outbound"
+    });
+    const result = appendHookTranscriptEvent({
+      root,
+      event: {
+        content: "技术风险是并发状态不一致。",
+        messageId: "m-linus",
+        authorId: "1478055078140182690",
+        metadata: { originatingTo: "123" }
+      },
+      ctx: { channelId: "discord" },
+      direction: "inbound"
+    });
+    assert.equal(result.hostedTurn.updated, true);
+    const state = JSON.parse(readFileSync(resolve(root, "workspace/groups/discussions/active/123.json"), "utf8"));
+    assert.deepEqual(state.receivedAgents, ["linus"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

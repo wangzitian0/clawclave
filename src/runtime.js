@@ -5,10 +5,16 @@ const DEFAULT_CONFIG = {
   goalsFile: "workspace/groups/company-goals.json",
   memoryDir: "memory/clawclave",
   onboardingDir: "workspace/groups/onboarding/active",
+  hostedTurnsDir: "workspace/groups/discussions/active",
+  eventsDir: "workspace/groups/discussions/events",
+  agentRoleMapFile: "workspace/agents/discord-agent-roles.json",
   hostAccountId: "tianclaw",
   promptContext: true,
   transcriptWriter: true,
   onboarding: true,
+  hostedTurns: true,
+  hostedTurnMinWaitSeconds: 45,
+  hostedTurnMaxWaitSeconds: 120,
   tailEvents: 12
 };
 
@@ -89,10 +95,16 @@ export function normalizePluginConfig(value = {}) {
     goalsFile: firstString(config.goalsFile) ?? DEFAULT_CONFIG.goalsFile,
     memoryDir: firstString(config.memoryDir) ?? DEFAULT_CONFIG.memoryDir,
     onboardingDir: firstString(config.onboardingDir) ?? DEFAULT_CONFIG.onboardingDir,
+    hostedTurnsDir: firstString(config.hostedTurnsDir) ?? DEFAULT_CONFIG.hostedTurnsDir,
+    eventsDir: firstString(config.eventsDir) ?? DEFAULT_CONFIG.eventsDir,
+    agentRoleMapFile: firstString(config.agentRoleMapFile) ?? DEFAULT_CONFIG.agentRoleMapFile,
     hostAccountId: firstString(config.hostAccountId) ?? DEFAULT_CONFIG.hostAccountId,
     promptContext: config.promptContext !== false,
     transcriptWriter: config.transcriptWriter !== false,
     onboarding: config.onboarding !== false,
+    hostedTurns: config.hostedTurns !== false,
+    hostedTurnMinWaitSeconds: clampInteger(config.hostedTurnMinWaitSeconds, DEFAULT_CONFIG.hostedTurnMinWaitSeconds, 0, 600),
+    hostedTurnMaxWaitSeconds: clampInteger(config.hostedTurnMaxWaitSeconds, DEFAULT_CONFIG.hostedTurnMaxWaitSeconds, 10, 3600),
     tailEvents: clampInteger(config.tailEvents, DEFAULT_CONFIG.tailEvents, 0, 50)
   };
 }
@@ -207,6 +219,195 @@ function transcriptFile(root, config, group, ids, timestamp) {
   const scope = transcriptScope(group, ids);
   const threadPart = ids.threadId ? `/threads/${ids.threadId}` : "";
   return resolve(memoryRoot, "transcripts", scope + threadPart, `${monthFromTimestamp(timestamp)}.jsonl`);
+}
+
+function loadAgentRoleMap(root, config) {
+  const roleMap = readJson(resolvePath(root, config.agentRoleMapFile), { roles: [] });
+  return Array.isArray(roleMap.roles) ? roleMap.roles : [];
+}
+
+function extractDiscordMentionIds(text) {
+  const userIds = new Set();
+  const roleIds = new Set();
+  for (const match of String(text ?? "").matchAll(/<@!?(\d+)>/g)) userIds.add(match[1]);
+  for (const match of String(text ?? "").matchAll(/<@&(\d+)>/g)) roleIds.add(match[1]);
+  return { userIds, roleIds };
+}
+
+function resolveMentionedAgents(text, roles, hostAccountId) {
+  const { userIds, roleIds } = extractDiscordMentionIds(text);
+  const byAccount = new Map();
+  for (const role of roles) {
+    const accountId = firstString(role.accountId);
+    if (!accountId || accountId === hostAccountId) continue;
+    if (userIds.has(firstString(role.botUserId)) || roleIds.has(firstString(role.roleId))) {
+      byAccount.set(accountId, {
+        accountId,
+        displayName: firstString(role.displayName, role.roleName, role.accountId),
+        botUserId: firstString(role.botUserId),
+        roleId: firstString(role.roleId)
+      });
+    }
+  }
+  return [...byAccount.values()];
+}
+
+function looksLikeHostedTurnRequest(text) {
+  const value = String(text ?? "");
+  if (!value.trim()) return false;
+  return /(各|每人|每位|一人|回复|回答|看下|看一下|查证|查一下|复核|评估|参赛|提交|本轮|下一轮|讨论|大赛|比赛|请|你来|帮忙|reply|review|research|round|each|discuss|contest)/i.test(value);
+}
+
+function hostedTurnScopeId(ids = {}) {
+  return ids.threadId || ids.channelId;
+}
+
+function activeHostedTurnPath(root, config, ids = {}) {
+  const scopeId = hostedTurnScopeId(ids);
+  if (!scopeId) return undefined;
+  return resolve(resolvePath(root, config.hostedTurnsDir), `${safeSlug(scopeId)}.json`);
+}
+
+function appendDiscussionEvent(root, config, event) {
+  const now = new Date();
+  const file = resolve(resolvePath(root, config.eventsDir), `${monthFromTimestamp(now.toISOString())}.jsonl`);
+  mkdirSync(dirname(file), { recursive: true });
+  appendFileSync(file, `${JSON.stringify({ timestamp: now.toISOString(), ...event })}\n`);
+}
+
+function readActiveHostedTurn(root, config, ids = {}) {
+  const path = activeHostedTurnPath(root, config, ids);
+  if (!path) return { path: undefined, state: null };
+  const state = readJson(path, null);
+  if (!state || typeof state !== "object") return { path, state: null };
+  return { path, state };
+}
+
+function isHostedTurnFresh(state) {
+  if (!state || state.status !== "open") return false;
+  const deadline = Date.parse(state.deadlineAt ?? "");
+  if (!Number.isFinite(deadline)) return true;
+  return Date.now() <= deadline + 5 * 60 * 1000;
+}
+
+function updateHostedTurnFromOutbound({ root, config, input }) {
+  if (!config.hostedTurns || input.direction !== "outbound") return { opened: false, reason: "disabled or not outbound" };
+  if (input.agentId !== config.hostAccountId) return { opened: false, reason: "not host outbound" };
+  if (!input.channelId) return { opened: false, reason: "missing channel id" };
+  const content = String(input.content ?? "");
+  if (!looksLikeHostedTurnRequest(content)) return { opened: false, reason: "no hosted-turn intent" };
+  const roles = loadAgentRoleMap(root, config);
+  const expectedAgents = resolveMentionedAgents(content, roles, config.hostAccountId);
+  if (expectedAgents.length === 0) return { opened: false, reason: "no mentioned expert agents" };
+
+  const now = new Date();
+  const maxWaitMs = Math.max(config.hostedTurnMinWaitSeconds, config.hostedTurnMaxWaitSeconds) * 1000;
+  const minWaitMs = Math.min(config.hostedTurnMinWaitSeconds, config.hostedTurnMaxWaitSeconds) * 1000;
+  const state = {
+    version: 1,
+    id: `hosted-${input.threadId || input.channelId}-${input.messageId || now.getTime()}`,
+    status: "open",
+    mode: expectedAgents.length > 1 ? "hosted-mention" : "single-owner",
+    collaboration: expectedAgents.length > 1 ? "parallel" : "single-owner",
+    channelId: input.channelId,
+    threadId: input.threadId,
+    originMessageId: input.messageId,
+    hostAccountId: config.hostAccountId,
+    expectedAgents,
+    receivedAgents: [],
+    receivedMessageIds: [],
+    openedAt: now.toISOString(),
+    lastActivityAt: now.toISOString(),
+    summaryEligibleAt: new Date(now.getTime() + minWaitMs).toISOString(),
+    deadlineAt: new Date(now.getTime() + maxWaitMs).toISOString(),
+    summaryStarted: false,
+    policy: {
+      preferSilenceOverNoise: true,
+      expectedRepliesPerAgent: 1,
+      summary: "host decides after all expected replies, expected-1 after min wait, or max wait"
+    },
+    promptPreview: content.slice(0, 500)
+  };
+  const path = activeHostedTurnPath(root, config, input);
+  writeJson(path, state);
+  appendDiscussionEvent(root, config, {
+    type: "tianclaws-opened",
+    channelId: input.channelId,
+    threadId: input.threadId ?? null,
+    messageId: input.messageId,
+    stateId: state.id,
+    actor: "tianclaws",
+    targetAgent: expectedAgents.map((agent) => agent.accountId).join(","),
+    workType: expectedAgents.length > 1 ? "discussion" : "qa",
+    surface: input.threadId ? "thread" : "channel",
+    collaboration: state.collaboration,
+    questionSummary: content.slice(0, 160),
+    action: "opened-state",
+    reviewTags: ["hosted-mention", "prefer-silence"]
+  });
+  for (const agent of expectedAgents) {
+    appendDiscussionEvent(root, config, {
+      type: "participant-assigned",
+      channelId: input.channelId,
+      threadId: input.threadId ?? null,
+      messageId: input.messageId,
+      stateId: state.id,
+      actor: "tianclaws",
+      targetAgent: agent.accountId,
+      workType: expectedAgents.length > 1 ? "discussion" : "qa",
+      surface: input.threadId ? "thread" : "channel",
+      collaboration: state.collaboration,
+      questionSummary: content.slice(0, 160),
+      action: "assigned",
+      reviewTags: ["hosted-mention"]
+    });
+  }
+  return { opened: true, path, state };
+}
+
+function updateHostedTurnFromInbound({ root, config, input }) {
+  if (!config.hostedTurns || input.direction !== "inbound") {
+    return { updated: false, reason: "not hosted inbound" };
+  }
+  const { path, state } = readActiveHostedTurn(root, config, input);
+  if (!path || !isHostedTurnFresh(state)) return { updated: false, reason: "no fresh open turn" };
+  const expectedAgents = Array.isArray(state.expectedAgents) ? state.expectedAgents : [];
+  const agent = expectedAgents.find((entry) => entry?.botUserId === input.authorId || entry?.accountId === input.agentId);
+  if (!agent) return { updated: false, reason: "unexpected bot" };
+  if (Array.isArray(state.receivedAgents) && state.receivedAgents.includes(agent.accountId)) {
+    return { updated: false, reason: "already received" };
+  }
+  const now = new Date().toISOString();
+  state.receivedAgents = [...(Array.isArray(state.receivedAgents) ? state.receivedAgents : []), agent.accountId];
+  state.receivedMessageIds = [...(Array.isArray(state.receivedMessageIds) ? state.receivedMessageIds : []), input.messageId].filter(Boolean);
+  state.lastActivityAt = now;
+  state.replies = [
+    ...(Array.isArray(state.replies) ? state.replies : []),
+    {
+      agentId: agent.accountId,
+      botUserId: agent.botUserId,
+      messageId: input.messageId,
+      receivedAt: now,
+      preview: String(input.content ?? "").slice(0, 240)
+    }
+  ];
+  writeJson(path, state);
+  appendDiscussionEvent(root, config, {
+    type: "participant-replied",
+    channelId: input.channelId,
+    threadId: input.threadId ?? null,
+    messageId: input.messageId,
+    stateId: state.id,
+    actor: `bot:${agent.accountId}`,
+    targetAgent: config.hostAccountId,
+    workType: state.mode === "single-owner" ? "qa" : "discussion",
+    surface: input.threadId ? "thread" : "channel",
+    collaboration: state.collaboration,
+    questionSummary: "",
+    action: "replied",
+    reviewTags: ["hosted-mention"]
+  });
+  return { updated: true, path, state, agentId: agent.accountId };
 }
 
 export function buildMessageInput({ event = {}, ctx = {}, direction = "inbound" }) {
@@ -330,7 +531,10 @@ export function appendHookTranscriptEvent({ root, event = {}, ctx = {}, config =
   const file = transcriptFile(root, normalizedConfig, group, input, input.timestamp);
   mkdirSync(dirname(file), { recursive: true });
   appendFileSync(file, `${JSON.stringify({ ...input, groupSlug: group?.slug })}\n`);
-  return { appended: true, file, groupSlug: group?.slug, channelId: input.channelId };
+  const hostedTurn = direction === "outbound"
+    ? updateHostedTurnFromOutbound({ root, config: normalizedConfig, input })
+    : updateHostedTurnFromInbound({ root, config: normalizedConfig, input });
+  return { appended: true, file, groupSlug: group?.slug, channelId: input.channelId, hostedTurn };
 }
 
 function formatList(values) {
@@ -351,6 +555,31 @@ function buildMappedContext({ group, ids, tailEvents }) {
     ...tailEvents.map((event) => `- ${event.direction ?? "event"} ${event.authorLabel ?? event.authorId ?? "unknown"}: ${String(event.content ?? "").slice(0, 240)}`),
     "</clawclave_group_context>"
   ].filter((line) => line !== "").join("\n");
+}
+
+function buildHostedTurnContext({ state, accountId }) {
+  if (!isHostedTurnFresh(state)) return "";
+  const expected = Array.isArray(state.expectedAgents) ? state.expectedAgents : [];
+  const received = Array.isArray(state.receivedAgents) ? state.receivedAgents : [];
+  const expectedLines = expected.map((agent) => {
+    const marker = received.includes(agent.accountId) ? "received" : "pending";
+    return `- ${agent.displayName ?? agent.accountId} (${agent.accountId}): ${marker}`;
+  });
+  const isHost = accountId === state.hostAccountId;
+  const participant = expected.find((agent) => agent.accountId === accountId);
+  return [
+    `<clawclave_hosted_turn id="${state.id ?? ""}" status="${state.status}" mode="${state.mode ?? ""}">`,
+    `Host: ${state.hostAccountId ?? "tianclaw"}`,
+    `Deadline: ${state.deadlineAt ?? "not set"}`,
+    "Expected agents:",
+    ...expectedLines,
+    isHost
+      ? "Host guidance: prefer silence over noise. Summarize only after all expected replies arrive, after expected-1 replies and the minimum wait has passed, or after the deadline. Do not mention agents again unless intentionally opening a new round."
+      : participant
+        ? "Participant guidance: you were invited by TianClaws for this hosted turn. Reply once, stay within your assigned expertise, do not summon other agents, and do not continue the discussion unless TianClaws opens another round."
+        : "Non-participant guidance: you are not expected in this hosted turn. Stay silent unless directly mentioned by TianClaws.",
+    "</clawclave_hosted_turn>"
+  ].join("\n");
 }
 
 function buildUnmappedContext({ ids, onboardingState }) {
@@ -379,9 +608,15 @@ export function buildPromptHookDecision({ root, event = {}, ctx = {}, config = {
     ? transcriptFile(root, normalizedConfig, group, ids, new Date().toISOString())
     : null;
   const tailEvents = transcript ? readLastJsonlEvents(transcript, normalizedConfig.tailEvents) : [];
-  const text = group
+  const groupText = group
     ? buildMappedContext({ group, ids, tailEvents })
     : buildUnmappedContext({ ids, onboardingState });
+  const hostedTurn = readActiveHostedTurn(root, normalizedConfig, ids).state;
+  const hostedTurnText = buildHostedTurnContext({
+    state: hostedTurn,
+    accountId: firstString(ctx.agentId, ctx.agent_id, event.agentId, event.agent_id)
+  });
+  const text = [groupText, hostedTurnText].filter(Boolean).join("\n\n");
 
   return {
     decision: { appendSystemContext: text },

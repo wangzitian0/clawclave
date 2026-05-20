@@ -50,9 +50,15 @@ Then add it to `openclaw.json`:
           "rootDir": "~/.openclaw",
           "goalsFile": "workspace/groups/company-goals.json",
           "hostAccountId": "tianclaw",
+          "hostedTurnsDir": "workspace/groups/discussions/active",
+          "eventsDir": "workspace/groups/discussions/events",
+          "agentRoleMapFile": "workspace/agents/discord-agent-roles.json",
           "promptContext": true,
           "transcriptWriter": true,
           "onboarding": true,
+          "hostedTurns": true,
+          "hostedTurnMinWaitSeconds": 45,
+          "hostedTurnMaxWaitSeconds": 120,
           "tailEvents": 12
         },
         "hooks": {
@@ -117,6 +123,21 @@ Pending state is written to:
 ```text
 workspace/groups/onboarding/active/<channel-id>.json
 ```
+
+## Hosted Mention Turns
+
+When the configured host account mentions one or more mapped expert agents with
+assignment language, Clawclave opens a lightweight hosted turn:
+
+```text
+workspace/groups/discussions/active/<channel-or-thread-id>.json
+```
+
+This is a conservative coordination layer, not a hard token gate. Experts are
+still expected to rely on Discord mentions and their own prompt rules, while
+TianClaws uses the hosted turn state to decide whether expected replies have
+arrived and whether to summarize. The default policy prefers silence over extra
+bot chatter.
 
 Clawclave intentionally does not invent durable group goals. A human should
 confirm the goal before writing it into the source of truth.

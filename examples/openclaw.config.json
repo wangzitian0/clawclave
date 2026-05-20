@@ -12,10 +12,16 @@
           "goalsFile": "workspace/groups/company-goals.json",
           "memoryDir": "memory/clawclave",
           "onboardingDir": "workspace/groups/onboarding/active",
+          "hostedTurnsDir": "workspace/groups/discussions/active",
+          "eventsDir": "workspace/groups/discussions/events",
+          "agentRoleMapFile": "workspace/agents/discord-agent-roles.json",
           "hostAccountId": "tianclaw",
           "promptContext": true,
           "transcriptWriter": true,
           "onboarding": true,
+          "hostedTurns": true,
+          "hostedTurnMinWaitSeconds": 45,
+          "hostedTurnMaxWaitSeconds": 120,
           "tailEvents": 12
         },
         "hooks": {

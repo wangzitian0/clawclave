@@ -22,6 +22,15 @@
       "onboardingDir": {
         "type": "string"
       },
+      "hostedTurnsDir": {
+        "type": "string"
+      },
+      "eventsDir": {
+        "type": "string"
+      },
+      "agentRoleMapFile": {
+        "type": "string"
+      },
       "hostAccountId": {
         "type": "string"
       },
@@ -33,6 +42,19 @@
       },
       "onboarding": {
         "type": "boolean"
+      },
+      "hostedTurns": {
+        "type": "boolean"
+      },
+      "hostedTurnMinWaitSeconds": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600
+      },
+      "hostedTurnMaxWaitSeconds": {
+        "type": "integer",
+        "minimum": 10,
+        "maximum": 3600
       },
       "tailEvents": {
         "type": "integer",
@@ -58,6 +80,18 @@
       "label": "Onboarding state directory",
       "help": "Relative to rootDir unless absolute. Default: workspace/groups/onboarding/active."
     },
+    "hostedTurnsDir": {
+      "label": "Hosted turn state directory",
+      "help": "Relative to rootDir unless absolute. Default: workspace/groups/discussions/active."
+    },
+    "eventsDir": {
+      "label": "Discussion event directory",
+      "help": "Relative to rootDir unless absolute. Default: workspace/groups/discussions/events."
+    },
+    "agentRoleMapFile": {
+      "label": "Discord agent role map",
+      "help": "Relative to rootDir unless absolute. Default: workspace/agents/discord-agent-roles.json."
+    },
     "hostAccountId": {
       "label": "Host Discord account ID",
       "help": "Only this OpenClaw Discord account sends visible onboarding prompts. Default: tianclaw."
@@ -73,6 +107,18 @@
     "onboarding": {
       "label": "Track unmapped channels",
       "help": "When true, unmapped Discord channels create pending onboarding state."
+    },
+    "hostedTurns": {
+      "label": "Track hosted mention turns",
+      "help": "When true, TianClaws outbound expert mentions create lightweight active discussion state."
+    },
+    "hostedTurnMinWaitSeconds": {
+      "label": "Hosted turn minimum wait",
+      "help": "Earliest time the host should summarize after enough participants reply. Default: 45."
+    },
+    "hostedTurnMaxWaitSeconds": {
+      "label": "Hosted turn maximum wait",
+      "help": "Deadline after which late bot replies should be gated conservatively. Default: 120."
     },
     "tailEvents": {
       "label": "Transcript tail events",
