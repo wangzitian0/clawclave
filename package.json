@@ -31,6 +31,10 @@
     "./sync-group-goals": "./src/sync-group-goals.js",
     "./onboard-discord-group": "./src/onboard-discord-group.js",
     "./audit-discord-group-runtime": "./src/audit-discord-group-runtime.js",
+    "./discussion-audits": "./src/discussion-audits.js",
+    "./audit-discussion-lifecycle": "./src/audit-discussion-lifecycle.js",
+    "./audit-communication-contracts": "./src/audit-communication-contracts.js",
+    "./audit-group-orchestration-rules": "./src/audit-group-orchestration-rules.js",
     "./thread-bindings-maintenance": "./src/thread-bindings-maintenance.js"
   },
   "bin": {
@@ -42,6 +46,7 @@
     "src",
     "docs",
     "examples",
+    "schemas",
     "openclaw.plugin.json",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
@@ -51,7 +56,8 @@
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check index.js && node --check src/runtime.js && node --check src/group-workspace.js && node --check src/sync-group-goals.js && node --check src/onboard-discord-group.js && node --check src/audit-discord-group-runtime.js && node --check src/thread-bindings-maintenance.js && node --check bin/clawclave.js"
+    "coverage": "node --test --experimental-test-coverage",
+    "check": "node --check index.js && node --check src/runtime.js && node --check src/group-workspace.js && node --check src/sync-group-goals.js && node --check src/onboard-discord-group.js && node --check src/audit-discord-group-runtime.js && node --check src/discussion-audits.js && node --check src/audit-discussion-lifecycle.js && node --check src/audit-communication-contracts.js && node --check src/audit-group-orchestration-rules.js && node --check src/thread-bindings-maintenance.js && node --check bin/clawclave.js"
   },
   "openclaw": {
     "extensions": [

@@ -1,0 +1,62 @@
+{
+  "id": "YYYYMMDDTHHMMSSZ-channel-shortslug",
+  "workType": "qa",
+  "surface": "channel",
+  "collaboration": "single-owner",
+  "groupSlug": "",
+  "channelId": "",
+  "threadId": null,
+  "originMessageId": "",
+  "question": "",
+  "expectedOutput": "Visible synthesis, decision, summary, or next action before close.",
+  "successCriteria": {
+    "kind": "hosted-discussion",
+    "requiredVisibleArtifact": "synthesis",
+    "description": ""
+  },
+  "delivery": {
+    "required": "ordinary_reply",
+    "visibleMessageRequired": true,
+    "batchSize": null
+  },
+  "status": "open",
+  "primarySpeaker": "",
+  "ownerQueue": [],
+  "currentOwner": "",
+  "participants": [
+    {
+      "agentId": "",
+      "name": "",
+      "mention": "",
+      "role": "",
+      "status": "pending",
+      "messageId": null,
+      "modelUsed": null,
+      "errorReason": null
+    }
+  ],
+  "evidence": {
+    "required": false,
+    "minimumSources": 0,
+    "sourcePolicy": "none",
+    "sources": []
+  },
+  "deliverables": {
+    "summaryMessageId": null,
+    "result": "",
+    "confidence": null,
+    "openQuestions": [],
+    "nextAction": ""
+  },
+  "turnCount": 0,
+  "maxTurns": 2,
+  "maxVisibleMessages": 4,
+  "openedAt": "YYYY-MM-DDTHH:mm:ssZ",
+  "lastActivityAt": "YYYY-MM-DDTHH:mm:ssZ",
+  "deadlineAt": null,
+  "ackReaction": "",
+  "ackReactionMessageId": "",
+  "timeoutPolicy": "none",
+  "closeReason": null,
+  "reviewTags": []
+}

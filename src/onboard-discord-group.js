@@ -20,8 +20,8 @@ function writeJson(path, value) {
 function usage() {
   return `Usage:
   clawclave onboard-discord-group \\
-    --slug westworld \\
-    --name "Westworld Desk" \\
+    --slug ops-lab \\
+    --name "Ops Lab" \\
     --channel-id 1234567890 \\
     --goal "..." \\
     --north-star "..." \\
@@ -94,7 +94,7 @@ function parseArgs(argv) {
 
 function assertSlug(slug) {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug ?? "")) {
-    throw new Error("slug must be lowercase kebab-case, for example westworld or westworld-lab");
+    throw new Error("slug must be lowercase kebab-case, for example ops or ops-lab");
   }
 }
 

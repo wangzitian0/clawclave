@@ -14,7 +14,7 @@ Clawclave is configured from the `plugins.entries.clawclave.config` object in
   "hostedTurnsDir": "workspace/groups/discussions/active",
   "eventsDir": "workspace/groups/discussions/events",
   "agentRoleMapFile": "workspace/agents/discord-agent-roles.json",
-  "hostAccountId": "tianclaw",
+  "hostAccountId": "host",
   "promptContext": true,
   "transcriptWriter": true,
   "onboarding": true,
@@ -56,13 +56,13 @@ Directory where compact discussion orchestration events are appended.
 `agentRoleMapFile`
 
 Discord agent role and bot-user mapping. Clawclave uses this file to identify
-which expert agents TianClaws mentioned in a hosted turn.
+which expert agents the host agent mentioned in a hosted turn.
 
 `hostAccountId`
 
 OpenClaw Discord account that is allowed to send a visible onboarding prompt.
 This avoids every bot in a multi-account Discord server asking the same
-question. Default: `tianclaw`.
+question. Default: `host`.
 
 `promptContext`
 
@@ -79,13 +79,13 @@ When true, Clawclave creates pending onboarding state for unmapped channels.
 
 `hostedTurns`
 
-When true, TianClaws outbound expert mentions with assignment language open a
+When true, host-account outbound expert mentions with assignment language open a
 lightweight active hosted turn. This is intentionally conservative and prefers
 missed summaries over accidental bot loops.
 
 `hostedTurnMinWaitSeconds`
 
-Earliest point at which TianClaws should summarize after enough expected
+Earliest point at which the host agent should summarize after enough expected
 participants have replied. Default: `45`.
 
 `hostedTurnMaxWaitSeconds`

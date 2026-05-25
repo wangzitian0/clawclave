@@ -8,7 +8,7 @@ const DEFAULT_CONFIG = {
   hostedTurnsDir: "workspace/groups/discussions/active",
   eventsDir: "workspace/groups/discussions/events",
   agentRoleMapFile: "workspace/agents/discord-agent-roles.json",
-  hostAccountId: "tianclaw",
+  hostAccountId: "host",
   promptContext: true,
   transcriptWriter: true,
   onboarding: true,
@@ -341,12 +341,12 @@ function updateHostedTurnFromOutbound({ root, config, input }) {
   const path = activeHostedTurnPath(root, config, input);
   writeJson(path, state);
   appendDiscussionEvent(root, config, {
-    type: "tianclaws-opened",
+    type: "host-opened",
     channelId: input.channelId,
     threadId: input.threadId ?? null,
     messageId: input.messageId,
     stateId: state.id,
-    actor: "tianclaws",
+    actor: config.hostAccountId,
     targetAgent: expectedAgents.map((agent) => agent.accountId).join(","),
     workType: expectedAgents.length > 1 ? "discussion" : "qa",
     surface: input.threadId ? "thread" : "channel",
@@ -362,7 +362,7 @@ function updateHostedTurnFromOutbound({ root, config, input }) {
       threadId: input.threadId ?? null,
       messageId: input.messageId,
       stateId: state.id,
-      actor: "tianclaws",
+      actor: config.hostAccountId,
       targetAgent: agent.accountId,
       workType: expectedAgents.length > 1 ? "discussion" : "qa",
       surface: input.threadId ? "thread" : "channel",
@@ -466,7 +466,7 @@ function buildOnboardingVisiblePrompt(input) {
     "这个群还没有初始化目标。我先建一个 onboarding 记录。",
     "",
     "请确认这几个字段：",
-    "1. slug（小写短横线，例如 westworld）",
+    "1. slug（小写短横线，例如 ops-lab）",
     "2. 群名称",
     "3. 一句话目标",
     "4. North Star",
@@ -479,47 +479,32 @@ function isSubstantiveOnboardingText(content) {
   const text = String(content ?? "").trim();
   if (!text) return false;
   if (/^(hi|hello|hey|test|ping|在吗)[.!。！?？\s]*$/i.test(text)) return false;
-  return text.length >= 12 || text.includes("\n") || /(目标|讨论|维护|研究|项目|一起|刷|公司|意识|人工智能|西部世界|west\s*world|westworld|ai)/i.test(text);
+  return text.length >= 12 || text.includes("\n") || /(目标|讨论|维护|研究|项目|一起|公司|community|project|team|ops|research|ai)/i.test(text);
 }
 
 function inferOnboardingGroup(input, state = {}) {
   const content = String(input.content ?? "").trim();
   const slugMatch = content.match(/(?:^|\n)\s*slug\s*[:：]\s*([a-z0-9][a-z0-9-]{1,60})\s*(?:\n|$)/i);
   const nameMatch = content.match(/(?:群名称|name)\s*[:：]\s*([^\n]{2,80})/i);
-  const isWestworld = /(西部世界|west\s*world|westworld)/i.test(content);
   const fallbackSlug = `group-${String(input.channelId ?? "unknown").slice(-6)}`;
-  const slug = safeSlug(slugMatch?.[1] ?? state.slug ?? (isWestworld ? "westworld" : fallbackSlug));
-  const name = firstString(nameMatch?.[1], state.name, isWestworld ? "Westworld Watch Club" : `Group ${String(input.channelId ?? "unknown").slice(-6)}`);
-  const oneLineGoal = isWestworld
-    ? "Watch Westworld together and use concrete episode context to discuss AI, consciousness, agency, and product implications."
-    : `Maintain a focused group workspace around: ${content.split(/\r?\n/).find((line) => line.trim())?.trim().slice(0, 160) ?? "the confirmed group topic"}.`;
+  const slug = safeSlug(slugMatch?.[1] ?? state.slug ?? fallbackSlug);
+  const name = firstString(nameMatch?.[1], state.name, `Group ${String(input.channelId ?? "unknown").slice(-6)}`);
+  const oneLineGoal = `Maintain a focused group workspace around: ${content.split(/\r?\n/).find((line) => line.trim())?.trim().slice(0, 160) ?? "the confirmed group topic"}.`;
   return {
     slug,
     name,
     channelId: input.channelId,
     doc: `workspace/groups/${slug}/IDENTITY.md`,
     oneLineGoal,
-    northStar: isWestworld
-      ? "Useful episode discussions that connect scenes to clear AI/consciousness questions or reusable notes."
-      : "Useful group conversations that produce clear notes, decisions, or next actions.",
-    operatingMetrics: isWestworld
-      ? [
-          "Discussions tied to specific episodes, scenes, or concepts.",
-          "Follow-up questions or notes that sharpen AI/consciousness thinking."
-        ]
-      : [
-          "Messages that clarify the question, context, and next step.",
-          "Useful notes or decisions captured when the group converges."
-        ],
-    guardrailMetrics: isWestworld
-      ? [
-          "Vague philosophy detached from episode evidence.",
-          "Spoilers beyond the current discussion context without warning."
-        ]
-      : [
-          "Unclear group purpose after onboarding.",
-          "Uncaptured decisions or repeated context resets."
-        ]
+    northStar: "Useful group conversations that produce clear notes, decisions, or next actions.",
+    operatingMetrics: [
+      "Messages that clarify the question, context, and next step.",
+      "Useful notes or decisions captured when the group converges."
+    ],
+    guardrailMetrics: [
+      "Unclear group purpose after onboarding.",
+      "Uncaptured decisions or repeated context resets."
+    ]
   };
 }
 
@@ -702,15 +687,15 @@ function buildHostedTurnContext({ state, accountId }) {
   const participant = expected.find((agent) => agent.accountId === accountId);
   return [
     `<clawclave_hosted_turn id="${state.id ?? ""}" status="${state.status}" mode="${state.mode ?? ""}">`,
-    `Host: ${state.hostAccountId ?? "tianclaw"}`,
+    `Host: ${state.hostAccountId ?? "host"}`,
     `Deadline: ${state.deadlineAt ?? "not set"}`,
     "Expected agents:",
     ...expectedLines,
     isHost
       ? "Host guidance: prefer silence over noise. Summarize only after all expected replies arrive, after expected-1 replies and the minimum wait has passed, or after the deadline. Do not mention agents again unless intentionally opening a new round."
       : participant
-        ? "Participant guidance: you were invited by TianClaws for this hosted turn. Reply once, stay within your assigned expertise, do not summon other agents, and do not continue the discussion unless TianClaws opens another round."
-        : "Non-participant guidance: you are not expected in this hosted turn. Stay silent unless directly mentioned by TianClaws.",
+        ? "Participant guidance: you were invited by the host agent for this hosted turn. Reply once, stay within your assigned expertise, do not summon other agents, and do not continue the discussion unless the host agent opens another round."
+        : "Non-participant guidance: you are not expected in this hosted turn. Stay silent unless directly mentioned by the host agent.",
     "</clawclave_hosted_turn>"
   ].join("\n");
 }
@@ -732,7 +717,7 @@ function buildHostRosterContext({ root, config, accountId }) {
   return [
     "<clawclave_host_roster>",
     "When hosting a discussion, contest, research check, or participation event, invite agents with these exact Discord mentions. Plain @name text is not a ping and does not open hosted state.",
-    "If a human directly mentions an agent, that direct mention has priority for that agent. As host, do not repeat direct human pings; stay quiet or coordinate only when the human asked TianClaws to host, summarize, route, or reduce noise.",
+    "If a human directly mentions an agent, that direct mention has priority for that agent. As host, do not repeat direct human pings; stay quiet or coordinate only when the human asked the host agent to host, summarize, route, or reduce noise.",
     "Do not ask the human to mention experts directly. Do not mention participants again in a summary unless intentionally opening a new round.",
     ...roles,
     "</clawclave_host_roster>"

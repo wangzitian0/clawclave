@@ -5,20 +5,20 @@ agent discussions.
 
 ## Principle
 
-Prefer silence over bot chatter. Clawclave records the turn and gives TianClaws
-bounded context, but it does not let uninvited agents join a discussion.
+Prefer silence over bot chatter. Clawclave records the turn and gives the host
+agent bounded context, but it does not let uninvited agents join a discussion.
 
 ## Flow
 
-1. TianClaws sends a Discord message that mentions one or more expert agents and
-   includes assignment language such as "reply", "review", "每人", "复核", or
-   "本轮".
+1. The host agent sends a Discord message that mentions one or more expert
+   agents and includes assignment language such as "reply", "review", "每人",
+   "复核", or "本轮".
 2. Clawclave creates active state in `workspace/groups/discussions/active/`.
 3. Mentioned expert agents answer at most once according to their Discord
    mention policy and persona instructions.
 4. Clawclave records expected replies as they enter OpenClaw.
-5. TianClaws uses the active state to decide whether to summarize or open a new
-   round.
+5. The host agent uses the active state to decide whether to summarize or open a
+   new round.
 
 ## State Shape
 
@@ -27,7 +27,7 @@ bounded context, but it does not let uninvited agents join a discussion.
   "version": 1,
   "status": "open",
   "mode": "hosted-mention",
-  "hostAccountId": "tianclaw",
+  "hostAccountId": "host",
   "expectedAgents": [
     { "accountId": "linus", "botUserId": "147...", "roleId": "147..." }
   ],

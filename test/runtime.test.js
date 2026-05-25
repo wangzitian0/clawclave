@@ -46,7 +46,7 @@ test("normalizePluginConfig uses marketplace-safe defaults", () => {
     hostedTurnsDir: "workspace/groups/discussions/active",
     eventsDir: "workspace/groups/discussions/events",
     agentRoleMapFile: "workspace/agents/discord-agent-roles.json",
-    hostAccountId: "tianclaw",
+    hostAccountId: "host",
     promptContext: true,
     transcriptWriter: true,
     onboarding: true,
@@ -82,7 +82,7 @@ test("buildPromptHookDecision injects mapped group context", () => {
   }
 });
 
-test("buildPromptHookDecision injects host roster for TianClaws before hosted state exists", () => {
+test("buildPromptHookDecision injects host roster before hosted state exists", () => {
   const root = tempRoot();
   try {
     writeGoals(root);
@@ -98,8 +98,8 @@ test("buildPromptHookDecision injects host roster for TianClaws before hosted st
             roleId: "1478057217365250051"
           },
           {
-            accountId: "tianclaw",
-            displayName: "TianClaws",
+            accountId: "host",
+            displayName: "Host Agent",
             botUserId: "1476901813792931994",
             roleId: "1478057919525290159"
           }
@@ -109,7 +109,7 @@ test("buildPromptHookDecision injects host roster for TianClaws before hosted st
     const result = buildPromptHookDecision({
       root,
       event: {},
-      ctx: { messageProvider: "discord", channelId: "123", agentId: "tianclaw" }
+      ctx: { messageProvider: "discord", channelId: "123", agentId: "host" }
     });
     assert.match(result.decision.appendSystemContext, /clawclave_host_roster/);
     assert.match(result.decision.appendSystemContext, /<@1478055078140182690>/);
@@ -147,7 +147,7 @@ test("unmapped prompt context blocks normal business before onboarding", () => {
     const result = buildPromptHookDecision({
       root,
       event: { metadata: { guildId: "g1", originatingTo: "999" } },
-      ctx: { channelId: "discord", agentId: "tianclaw", messageId: "m1" }
+      ctx: { channelId: "discord", agentId: "host", messageId: "m1" }
     });
     assert.equal(result.audit.loaded, true);
     assert.equal(result.audit.unmapped, true);
@@ -174,9 +174,9 @@ test("raw ingress creates onboarding state and prompts only from host account", 
     const nonHost = recordDiscordRawIngress({ root, event, accountId: "other" });
     assert.equal(nonHost.handled, true);
     assert.equal(nonHost.visiblePrompt, undefined);
-    const host = recordDiscordRawIngress({ root, event: { ...event, id: "raw-2" }, accountId: "tianclaw" });
+    const host = recordDiscordRawIngress({ root, event: { ...event, id: "raw-2" }, accountId: "host" });
     assert.match(host.visiblePrompt, /这个群还没有初始化目标/);
-    const again = recordDiscordRawIngress({ root, event: { ...event, id: "raw-3" }, accountId: "tianclaw" });
+    const again = recordDiscordRawIngress({ root, event: { ...event, id: "raw-3" }, accountId: "host" });
     assert.match(again.visiblePrompt, /等待目标确认/);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -195,7 +195,7 @@ test("raw ingress configures pending group from substantive host reply", () => {
       content: "hi",
       author: { id: "u1", username: "tester" }
     };
-    recordDiscordRawIngress({ root, event, accountId: "tianclaw" });
+    recordDiscordRawIngress({ root, event, accountId: "host" });
     const configured = recordDiscordRawIngress({
       root,
       event: {
@@ -203,17 +203,17 @@ test("raw ingress configures pending group from substantive host reply", () => {
         id: "raw-2",
         content: "一起刷西部世界电视剧\n讨论人工智能和“意识”的本质\n其他的你定吧"
       },
-      accountId: "tianclaw"
+      accountId: "host"
     });
-    assert.match(configured.visiblePrompt, /已初始化 Westworld Watch Club/);
+    assert.match(configured.visiblePrompt, /已初始化 Group 248881/);
     const goals = JSON.parse(readFileSync(resolve(root, "workspace/groups/company-goals.json"), "utf8"));
-    const group = goals.groups.find((entry) => entry.slug === "westworld");
+    const group = goals.groups.find((entry) => entry.slug === "group-248881");
     assert.equal(group.channelId, "1506560974281248881");
-    assert.match(group.oneLineGoal, /Westworld/);
-    assert.equal(existsSync(resolve(root, "workspace/groups/westworld/IDENTITY.md")), true);
+    assert.match(group.oneLineGoal, /一起刷西部世界电视剧/);
+    assert.equal(existsSync(resolve(root, "workspace/groups/group-248881/IDENTITY.md")), true);
     const state = JSON.parse(readFileSync(resolve(root, "workspace/groups/onboarding/active/1506560974281248881.json"), "utf8"));
     assert.equal(state.status, "configured");
-    assert.equal(state.groupSlug, "westworld");
+    assert.equal(state.groupSlug, "group-248881");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -231,13 +231,13 @@ test("raw ingress reminds pending host without letting non-host overwrite state"
       content: "hi",
       author: { id: "u1", username: "tester" }
     };
-    recordDiscordRawIngress({ root, event, accountId: "tianclaw" });
-    const reminder = recordDiscordRawIngress({ root, event: { ...event, id: "raw-2" }, accountId: "tianclaw" });
+    recordDiscordRawIngress({ root, event, accountId: "host" });
+    const reminder = recordDiscordRawIngress({ root, event: { ...event, id: "raw-2" }, accountId: "host" });
     assert.match(reminder.visiblePrompt, /等待目标确认/);
     const nonHost = recordDiscordRawIngress({ root, event: { ...event, id: "raw-3", content: "anything" }, accountId: "linus" });
     assert.equal(nonHost.visiblePrompt, undefined);
     const state = JSON.parse(readFileSync(resolve(root, "workspace/groups/onboarding/active/999.json"), "utf8"));
-    assert.equal(state.lastSeenByAccountId, "tianclaw");
+    assert.equal(state.lastSeenByAccountId, "host");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -277,8 +277,8 @@ test("host outbound expert mentions create hosted turn state", () => {
             roleId: "1478057217365250051"
           },
           {
-            accountId: "tianclaw",
-            displayName: "TianClaws",
+            accountId: "host",
+            displayName: "Host Agent",
             botUserId: "bot-host",
             roleId: "role-host"
           }
@@ -288,7 +288,7 @@ test("host outbound expert mentions create hosted turn state", () => {
     const result = appendHookTranscriptEvent({
       root,
       event: { content: "本轮请 <@1478055078140182690> 看一下技术风险，回复一次。", messageId: "m-host", metadata: { originatingTo: "123" } },
-      ctx: { channelId: "discord", agentId: "tianclaw" },
+      ctx: { channelId: "discord", agentId: "host" },
       direction: "outbound"
     });
     assert.equal(result.hostedTurn.opened, true);
@@ -322,7 +322,7 @@ test("expected bot inbound reply is recorded against hosted turn", () => {
     appendHookTranscriptEvent({
       root,
       event: { content: "本轮请 <@1478055078140182690> 回复一次。", messageId: "m-host", metadata: { originatingTo: "123" } },
-      ctx: { channelId: "discord", agentId: "tianclaw" },
+      ctx: { channelId: "discord", agentId: "host" },
       direction: "outbound"
     });
     const result = appendHookTranscriptEvent({

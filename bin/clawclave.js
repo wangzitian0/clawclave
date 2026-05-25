@@ -7,6 +7,9 @@ const commands = {
   "sync-group-goals": "../src/sync-group-goals.js",
   "onboard-discord-group": "../src/onboard-discord-group.js",
   "audit-discord-group-runtime": "../src/audit-discord-group-runtime.js",
+  "audit-discussion-lifecycle": "../src/audit-discussion-lifecycle.js",
+  "audit-communication-contracts": "../src/audit-communication-contracts.js",
+  "audit-group-orchestration-rules": "../src/audit-group-orchestration-rules.js",
   "prune-expired-discord-thread-bindings": "../src/thread-bindings-maintenance.js"
 };
 
@@ -18,6 +21,9 @@ Commands:
   sync-group-goals
   onboard-discord-group
   audit-discord-group-runtime
+  audit-discussion-lifecycle
+  audit-communication-contracts
+  audit-group-orchestration-rules
   prune-expired-discord-thread-bindings
 `;
 }

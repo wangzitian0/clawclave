@@ -6,6 +6,7 @@ Thanks for improving Clawclave.
 
 ```bash
 npm test
+npm run coverage
 npm run check
 ```
 

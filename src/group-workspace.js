@@ -277,7 +277,7 @@ ${markdownList(group.guardrailMetrics)}
 
 ## Routing Rules
 
-- TianClaws owns orchestration, routing, summaries, and review loops.
+- The host agent owns orchestration, routing, summaries, and review loops.
 - Domain agents own substance only when mentioned, assigned, or clearly
   responsible for the topic.
 - Prefer one accountable owner over broad fan-out.
@@ -318,7 +318,7 @@ Review this group every ${review.cadenceDays} days.
 - Did the group produce evidence for the North Star?
 - Did operating metrics improve or degrade?
 - Did any guardrail metric fire?
-- What should TianClaws route, summarize, or stop doing next period?
+- What should the host agent route, summarize, or stop doing next period?
 `;
 }
 
@@ -1087,7 +1087,7 @@ function ensureDiscordMemoryReadme(root) {
     readme,
     `# Discord Memory
 
-Append-only Discord transcript memory written by the TianClaw group-context
+Append-only Discord transcript memory written by the Clawclave group-context
 plugin.
 
 - Raw message memory is stored as monthly JSONL under this directory.
@@ -1521,7 +1521,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 }
 
 export function makeTempRoot() {
-  return mkdtempSync(resolve(tmpdir(), "tianclaw-group-workspace-"));
+  return mkdtempSync(resolve(tmpdir(), "clawclave-group-workspace-"));
 }
 
 export function removeTempRoot(path) {

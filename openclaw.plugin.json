@@ -94,7 +94,7 @@
     },
     "hostAccountId": {
       "label": "Host Discord account ID",
-      "help": "Only this OpenClaw Discord account sends visible onboarding prompts. Default: tianclaw."
+      "help": "Only this OpenClaw Discord account sends visible onboarding prompts. Default: host."
     },
     "promptContext": {
       "label": "Inject group context",
@@ -110,7 +110,7 @@
     },
     "hostedTurns": {
       "label": "Track hosted mention turns",
-      "help": "When true, TianClaws outbound expert mentions create lightweight active discussion state."
+      "help": "When true, host-account outbound expert mentions create lightweight active discussion state."
     },
     "hostedTurnMinWaitSeconds": {
       "label": "Hosted turn minimum wait",

@@ -13,6 +13,9 @@ Discord and need a clear source of truth for what each channel is for.
 - Detects unmapped Discord channels and creates onboarding state.
 - Records normalized inbound and outbound transcript events.
 - Keeps group goals in a portable JSON source of truth.
+- Defines hosted discussion, participation, research, and onboarding contracts.
+- Audits discussion lifecycle state, communication contracts, and deprecated
+  orchestration residue.
 - Provides marketplace-ready metadata for OpenClaw plugin discovery.
 
 Clawclave does not replace the official Discord channel plugin. It sits beside
@@ -49,7 +52,7 @@ Then add it to `openclaw.json`:
         "config": {
           "rootDir": "~/.openclaw",
           "goalsFile": "workspace/groups/company-goals.json",
-          "hostAccountId": "tianclaw",
+          "hostAccountId": "host",
           "hostedTurnsDir": "workspace/groups/discussions/active",
           "eventsDir": "workspace/groups/discussions/events",
           "agentRoleMapFile": "workspace/agents/discord-agent-roles.json",
@@ -135,9 +138,9 @@ workspace/groups/discussions/active/<channel-or-thread-id>.json
 
 This is a conservative coordination layer, not a hard token gate. Experts are
 still expected to rely on Discord mentions and their own prompt rules, while
-TianClaws uses the hosted turn state to decide whether expected replies have
-arrived and whether to summarize. The default policy prefers silence over extra
-bot chatter.
+the host agent uses the hosted turn state to decide whether expected replies
+have arrived and whether to summarize. The default policy prefers silence over
+extra bot chatter.
 
 Clawclave intentionally does not invent durable group goals. A human should
 confirm the goal before writing it into the source of truth.
@@ -152,12 +155,29 @@ clawclave group-workspace --check
 clawclave sync-group-goals --check
 clawclave onboard-discord-group --help
 clawclave audit-discord-group-runtime
+clawclave audit-discussion-lifecycle
+clawclave audit-communication-contracts
+clawclave audit-group-orchestration-rules
 clawclave prune-expired-discord-thread-bindings --check
 ```
 
 Keep private group data, runtime config, credentials, and production snapshots in
 the host repository or OpenClaw volume. Keep reusable group workspace,
-onboarding, transcript, and audit logic in this plugin.
+onboarding, transcript, hosted-flow contracts, and audit logic in this plugin.
+
+## Hosted Flow Contracts
+
+Clawclave owns the generic protocol for Discord group coordination:
+
+- interaction taxonomy: `docs/interaction-taxonomy.md`
+- success contracts: `docs/communication-contracts.md`
+- group workspace contract: `docs/group-workspace-contract.md`
+- group session schema: `docs/group-session-schema.md`
+- discussion event schema: `schemas/discussion-event.schema.json`
+- discussion state template: `schemas/discussion-state.template.json`
+
+Host repositories own actual group goals, channel IDs, agent rosters, session
+logs, historical discussion events, credentials, and deployment data.
 
 ## Transcript Memory
 

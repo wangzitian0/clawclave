@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "pathPattern": "workspace/groups/discussions/events/YYYY-MM.jsonl",
+  "description": "One compact JSON object per line. Store orchestration evidence, not raw chat.",
+  "requiredFields": [
+    "timestamp",
+    "type",
+    "channelId",
+    "messageId",
+    "actor"
+  ],
+  "fields": {
+    "timestamp": "ISO-8601 time when the event was observed.",
+    "type": "Event type from allowedTypes.",
+    "channelId": "Discord channel ID.",
+    "threadId": "Discord thread ID, or null.",
+    "messageId": "Source Discord message ID.",
+    "stateId": "Active discussion state ID, or null for direct-expert event-only flow.",
+    "actor": "human | host | bot:<accountId>",
+    "targetAgent": "Expert account or bot user ID when relevant.",
+    "workType": "qa | discussion | research | ops-change | diagnostic | participation | scheduled | silent-record",
+    "surface": "channel | thread",
+    "collaboration": "none | single-owner | sequential | parallel",
+    "questionSummary": "Short summary, no raw transcript.",
+    "action": "reaction | opened-state | assigned | replied | summarized | closed | gated | reviewed",
+    "reviewTags": "Short strings used by periodic review."
+  },
+  "allowedTypes": [
+    "direct-expert-mentioned",
+    "ack-reaction-added",
+    "expert-replied",
+    "host-opened",
+    "opened",
+    "assigned",
+    "participant-assigned",
+    "participant-replied",
+    "participant-delivered",
+    "participant-failed",
+    "research-source-recorded",
+    "result-delivered",
+    "thread-created",
+    "followup-asked",
+    "timed-out",
+    "unanswered-at-review",
+    "bot-message-gated",
+    "summarized",
+    "closed"
+  ]
+}

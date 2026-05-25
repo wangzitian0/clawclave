@@ -9,6 +9,18 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function firstString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" || typeof value === "bigint") return String(value);
+  }
+  return undefined;
+}
+
+function configuredHostAccountId(config) {
+  return firstString(config.plugins?.entries?.clawclave?.config?.hostAccountId, config.plugins?.clawclave?.hostAccountId) ?? "host";
+}
+
 function buildSystemPrompt(group, review, role) {
   const base = [
     `Sub-company: ${group.name} (${group.slug})`,
@@ -24,13 +36,13 @@ function buildSystemPrompt(group, review, role) {
     return [
       ...base,
       "Host rule: use this channel goal to decide whether to answer, route, stay quiet, ask for clarification, or record review evidence.",
-      "Bot-message gate: process bot messages only when they belong to an active discussion, follow a logged direct-expert mention, explicitly mention TianClaws, or are needed for review evidence; otherwise stay silent."
+      "Bot-message gate: process bot messages only when they belong to an active discussion, follow a logged direct-expert mention, explicitly mention the host agent, or are needed for review evidence; otherwise stay silent."
     ].join("\n");
   }
 
   return [
     ...base,
-    "Expert rule: use this channel goal to decide whether your domain expertise is relevant. Do not route, summon, or moderate other agents unless explicitly assigned. Answer only when mentioned, directly assigned by TianClaws, or clearly responsible for the topic; otherwise stay quiet."
+    "Expert rule: use this channel goal to decide whether your domain expertise is relevant. Do not route, summon, or moderate other agents unless explicitly assigned. Answer only when mentioned, directly assigned by the host agent, or clearly responsible for the topic; otherwise stay quiet."
   ].join("\n");
 }
 
@@ -62,6 +74,7 @@ function ensureWildcardGuild(entry) {
 }
 
 function applyGoalsToOpenClaw(config, goals) {
+  const hostAccountId = configuredHostAccountId(config);
   const hostPrompts = Object.fromEntries(
     goals.groups.map((group) => [group.channelId, buildSystemPrompt(group, goals.review, "host")])
   );
@@ -81,7 +94,7 @@ function applyGoalsToOpenClaw(config, goals) {
 
   for (const [accountId, account] of Object.entries(discord.accounts ?? {})) {
     if (accountId === "default" || !account || typeof account !== "object") continue;
-    const prompts = accountId === "tianclaw" ? hostPrompts : expertPrompts;
+    const prompts = accountId === hostAccountId ? hostPrompts : expertPrompts;
     const accountChannels = ensureWildcardGuild(account);
     for (const [channelId, systemPrompt] of Object.entries(prompts)) {
       accountChannels[channelId] = {

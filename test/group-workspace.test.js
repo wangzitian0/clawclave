@@ -33,7 +33,7 @@ function writeFixture(root) {
         version: 1,
         review: {
           cadenceDays: 14,
-          owner: "tianclaw",
+          owner: "host",
           statsPath: "workspace/groups/reviews/",
           template: "workspace/groups/reviews/TEMPLATE.md"
         },
@@ -273,22 +273,22 @@ test("onboardGroup creates goals entry and group workspace", () => {
     writeFixture(root);
     ensureAllGroupWorkspaces(root);
     const result = onboardGroup(root, {
-      slug: "westworld",
-      name: "Westworld Desk",
+      slug: "ops-lab",
+      name: "Ops Lab",
       channelId: "999123456789",
-      oneLineGoal: "Discuss Westworld ideas with clear context.",
-      northStar: "Useful Westworld discussion outcomes.",
+      oneLineGoal: "Discuss operational ideas with clear context.",
+      northStar: "Useful operations discussion outcomes.",
       op: ["Relevant theory rate.", "Follow-up ideas captured."],
-      guardrail: ["Invented canon.", "Unclear spoilers."],
+      guardrail: ["Invented context.", "Unclear handoffs."],
       syncOpenclaw: false,
       writeTopic: false
     });
-    assert.equal(result.group.slug, "westworld");
+    assert.equal(result.group.slug, "ops-lab");
     const goals = JSON.parse(readFileSync(resolve(root, "workspace/groups/company-goals.json"), "utf8"));
-    assert.ok(goals.groups.some((group) => group.slug === "westworld"));
-    const identity = readFileSync(resolve(root, "workspace/groups/westworld/IDENTITY.md"), "utf8");
+    assert.ok(goals.groups.some((group) => group.slug === "ops-lab"));
+    const identity = readFileSync(resolve(root, "workspace/groups/ops-lab/IDENTITY.md"), "utf8");
     assert.match(identity, /999123456789/);
-    assert.match(identity, /Discuss Westworld ideas/);
+    assert.match(identity, /Discuss operational ideas/);
     assert.deepEqual(validateGroupWorkspaces(root), []);
   } finally {
     removeTempRoot(root);
@@ -533,7 +533,7 @@ test("auditDiscordMemory reports coverage across conversation kinds", () => {
       channelId: "dm-1",
       channelType: "DM",
       direction: "outbound",
-      agentSlug: "tianclaw",
+      agentSlug: "host",
       content: "dm body"
     });
 
@@ -568,7 +568,7 @@ test("auditGroupTranscripts reports direction coverage and missing fields", () =
       messageId: "m2",
       channelId: "123",
       direction: "outbound",
-      agentSlug: "tianclaw",
+      agentSlug: "host",
       content: "done"
     });
     appendDiscordMessageEvent(root, goals, {
