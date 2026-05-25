@@ -744,7 +744,8 @@ function buildUnmappedContext({ ids, onboardingState }) {
     `<clawclave_unmapped_channel channel_id="${ids.channelId ?? ""}" guild_id="${ids.guildId ?? ""}">`,
     "This Discord channel is not registered in the group goals source of truth.",
     `Onboarding status: ${onboardingState?.status ?? "pending_goal"}`,
-    "If a response is needed, ask the human to confirm: slug, group name, one-line goal, north star, two operating metrics, and two guardrail metrics.",
+    "Pending-goal rule: do not answer normal business, scheduled, research, contest, or expert-routing requests in this channel yet.",
+    "If a response is needed, only ask the human to confirm: slug, group name, one-line goal, north star, two operating metrics, and two guardrail metrics.",
     "Do not invent durable group goals without human confirmation.",
     "</clawclave_unmapped_channel>"
   ].join("\n");

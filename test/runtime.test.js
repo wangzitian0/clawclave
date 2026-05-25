@@ -140,6 +140,25 @@ test("unmapped Discord channels create onboarding state", () => {
   }
 });
 
+test("unmapped prompt context blocks normal business before onboarding", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const result = buildPromptHookDecision({
+      root,
+      event: { metadata: { guildId: "g1", originatingTo: "999" } },
+      ctx: { channelId: "discord", agentId: "tianclaw", messageId: "m1" }
+    });
+    assert.equal(result.audit.loaded, true);
+    assert.equal(result.audit.unmapped, true);
+    assert.match(result.decision.appendSystemContext, /clawclave_unmapped_channel/);
+    assert.match(result.decision.appendSystemContext, /pending_goal/);
+    assert.match(result.decision.appendSystemContext, /do not answer normal business/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("raw ingress creates onboarding state and prompts only from host account", () => {
   const root = tempRoot();
   try {
