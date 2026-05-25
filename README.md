@@ -142,6 +142,23 @@ bot chatter.
 Clawclave intentionally does not invent durable group goals. A human should
 confirm the goal before writing it into the source of truth.
 
+## Host Repository Wrappers
+
+Host repositories can keep familiar operational commands as thin wrappers while
+depending on Clawclave for implementation. The reusable commands are:
+
+```bash
+clawclave group-workspace --check
+clawclave sync-group-goals --check
+clawclave onboard-discord-group --help
+clawclave audit-discord-group-runtime
+clawclave prune-expired-discord-thread-bindings --check
+```
+
+Keep private group data, runtime config, credentials, and production snapshots in
+the host repository or OpenClaw volume. Keep reusable group workspace,
+onboarding, transcript, and audit logic in this plugin.
+
 ## Transcript Memory
 
 When `transcriptWriter` is enabled, normalized events are appended under:
