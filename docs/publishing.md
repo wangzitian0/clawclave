@@ -5,6 +5,7 @@ Clawclave is packaged as an npm module. Before publishing, run:
 ```bash
 npm run verify
 npm run coverage
+npm run coverage:check
 npm run pack:dry-run
 ```
 
@@ -53,6 +54,9 @@ npm run coverage
 The command writes `coverage/lcov.info`. CI uploads that LCOV file with
 `coverallsapp/github-action@v2`, and the README badge points at the `main`
 branch Coveralls report.
+
+`npm run coverage:check` uses the same full-source coverage scope and fails if
+global statements, branches, functions, or lines fall below 50%.
 
 ## Release Hygiene
 

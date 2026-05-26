@@ -43,7 +43,7 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - run: npm install
-      - run: npm run coverage
+      - run: npm run coverage:check
       - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@v2
         with:
