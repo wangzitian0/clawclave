@@ -4,6 +4,7 @@ Clawclave is packaged as an npm module. Before publishing, run:
 
 ```bash
 npm run verify
+npm run coverage
 npm run pack:dry-run
 ```
 
@@ -40,6 +41,18 @@ Prefer GitHub Actions trusted publishing or `npm publish --provenance` from a
 supported cloud runner for release builds. Local manual publishing is acceptable
 for a first private test release, but it will not provide the same provenance
 signal.
+
+## Coverage
+
+Coverage is generated with `c8`:
+
+```bash
+npm run coverage
+```
+
+The command writes `coverage/lcov.info`. CI uploads that LCOV file with
+`coverallsapp/github-action@v2`, and the README badge points at the `main`
+branch Coveralls report.
 
 ## Release Hygiene
 
