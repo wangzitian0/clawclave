@@ -312,11 +312,13 @@ to run syntax checks and tests before `npm publish`.
 npm run verify
 npm test
 npm run coverage
+npm run coverage:check
 npm run pack:dry-run
 ```
 
 `npm run coverage` writes `coverage/lcov.info`, which the GitHub Actions
-workflow uploads to Coveralls.
+workflow uploads to Coveralls. `npm run coverage:check` enforces a 50% global
+floor for statements, branches, functions, and lines.
 
 This repository is intentionally dependency-light. The runtime uses Node.js
 built-ins and OpenClaw's plugin entry API.
