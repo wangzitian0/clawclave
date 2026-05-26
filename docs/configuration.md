@@ -17,11 +17,25 @@ Clawclave is configured from the `plugins.entries.clawclave.config` object in
   "hostAccountId": "host",
   "promptContext": true,
   "transcriptWriter": true,
+  "discordRawJournal": true,
+  "openclawTurnJournal": true,
   "onboarding": true,
   "hostedTurns": true,
   "hostedTurnMinWaitSeconds": 45,
   "hostedTurnMaxWaitSeconds": 120,
-  "tailEvents": 12
+  "tailEvents": 12,
+  "catchup": {
+    "enabled": true,
+    "lookbackMinutes": 180,
+    "intervalMinutes": 10,
+    "maxPagesPerChannel": 4
+  },
+  "selfCheck": {
+    "enabled": true,
+    "intervalHours": 168,
+    "setupChannelId": "123456789012345678",
+    "threadName": "Clawclave weekly persistence audit"
+  }
 }
 ```
 
@@ -73,6 +87,16 @@ runs through `before_prompt_build`.
 
 When true, Clawclave records normalized inbound and outbound hook events.
 
+`discordRawJournal`
+
+When true, Clawclave records Discord inbound and outbound evidence JSONL. The
+inbound side is written from OpenClaw hooks and from periodic Discord catchup.
+
+`openclawTurnJournal`
+
+When true, Clawclave records OpenClaw accepted input, output intent, and
+outbound result JSONL.
+
 `onboarding`
 
 When true, Clawclave creates pending onboarding state for unmapped channels.
@@ -96,3 +120,16 @@ Default: `120`.
 `tailEvents`
 
 Maximum recent transcript events to include in prompt context. Range: 0 to 50.
+
+`catchup`
+
+Periodic Discord REST backfill for recent channel history. It repairs messages
+missed during process restart or provider offline windows. `lookbackMinutes`
+controls how far back each scan goes, `intervalMinutes` controls scan cadence,
+and `maxPagesPerChannel` caps Discord API pagination.
+
+`selfCheck`
+
+Weekly long-running maintenance check. It runs catchup first, writes a compact
+state file, then posts the report to `setupChannelId` under `threadName`,
+creating the thread when Discord permissions allow it.

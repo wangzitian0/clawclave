@@ -15,7 +15,21 @@ const DEFAULT_CONFIG = {
   hostedTurns: true,
   hostedTurnMinWaitSeconds: 45,
   hostedTurnMaxWaitSeconds: 120,
-  tailEvents: 12
+  tailEvents: 12,
+  discordRawJournal: true,
+  openclawTurnJournal: true,
+  catchup: {
+    enabled: true,
+    lookbackMinutes: 180,
+    intervalMinutes: 10,
+    maxPagesPerChannel: 4
+  },
+  selfCheck: {
+    enabled: true,
+    intervalHours: 168,
+    setupChannelId: "1477547786349187155",
+    threadName: "Clawclave weekly persistence audit"
+  }
 };
 
 function isObject(value) {
@@ -53,6 +67,24 @@ function readJson(path, fallback) {
 function writeJson(path, value) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function appendJsonlUnique(path, record, key) {
+  mkdirSync(dirname(path), { recursive: true });
+  const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const marker = key ? `"dedupeKey":${JSON.stringify(key)}` : undefined;
+  if (marker && existing.includes(marker)) {
+    return { appended: false, duplicate: true, file: path };
+  }
+  appendFileSync(path, `${JSON.stringify({ dedupeKey: key, ...record })}\n`);
+  return { appended: true, duplicate: false, file: path };
+}
+
+function simpleHash(value) {
+  const text = String(value ?? "");
+  let hash = 5381;
+  for (let index = 0; index < text.length; index += 1) hash = ((hash << 5) + hash) ^ text.charCodeAt(index);
+  return (hash >>> 0).toString(36);
 }
 
 function appendJsonArrayRecord(path, key, record, match) {
@@ -98,6 +130,26 @@ function clampInteger(value, fallback, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function normalizeCatchupConfig(value) {
+  const config = isObject(value) ? value : {};
+  return {
+    enabled: config.enabled !== false,
+    lookbackMinutes: clampInteger(config.lookbackMinutes, DEFAULT_CONFIG.catchup.lookbackMinutes, 1, 10080),
+    intervalMinutes: clampInteger(config.intervalMinutes, DEFAULT_CONFIG.catchup.intervalMinutes, 1, 1440),
+    maxPagesPerChannel: clampInteger(config.maxPagesPerChannel, DEFAULT_CONFIG.catchup.maxPagesPerChannel, 1, 20)
+  };
+}
+
+function normalizeSelfCheckConfig(value) {
+  const config = isObject(value) ? value : {};
+  return {
+    enabled: config.enabled !== false,
+    intervalHours: clampInteger(config.intervalHours, DEFAULT_CONFIG.selfCheck.intervalHours, 1, 24 * 30),
+    setupChannelId: firstString(config.setupChannelId) ?? DEFAULT_CONFIG.selfCheck.setupChannelId,
+    threadName: firstString(config.threadName) ?? DEFAULT_CONFIG.selfCheck.threadName
+  };
+}
+
 export function normalizePluginConfig(value = {}) {
   const config = isObject(value) ? value : {};
   return {
@@ -115,7 +167,11 @@ export function normalizePluginConfig(value = {}) {
     hostedTurns: config.hostedTurns !== false,
     hostedTurnMinWaitSeconds: clampInteger(config.hostedTurnMinWaitSeconds, DEFAULT_CONFIG.hostedTurnMinWaitSeconds, 0, 600),
     hostedTurnMaxWaitSeconds: clampInteger(config.hostedTurnMaxWaitSeconds, DEFAULT_CONFIG.hostedTurnMaxWaitSeconds, 10, 3600),
-    tailEvents: clampInteger(config.tailEvents, DEFAULT_CONFIG.tailEvents, 0, 50)
+    tailEvents: clampInteger(config.tailEvents, DEFAULT_CONFIG.tailEvents, 0, 50),
+    discordRawJournal: config.discordRawJournal !== false,
+    openclawTurnJournal: config.openclawTurnJournal !== false,
+    catchup: normalizeCatchupConfig(config.catchup),
+    selfCheck: normalizeSelfCheckConfig(config.selfCheck)
   };
 }
 
@@ -229,6 +285,102 @@ function transcriptFile(root, config, group, ids, timestamp) {
   const scope = transcriptScope(group, ids);
   const threadPart = ids.threadId ? `/threads/${ids.threadId}` : "";
   return resolve(memoryRoot, "transcripts", scope + threadPart, `${monthFromTimestamp(timestamp)}.jsonl`);
+}
+
+function rawInboundFile(root, config, ids, timestamp) {
+  const memoryRoot = resolvePath(root, config.memoryDir);
+  const scope = ids.guildId
+    ? `discord/raw/guilds/${ids.guildId}/channels/${ids.channelId ?? "unknown"}`
+    : `discord/raw/dms/${ids.channelId ?? "unknown"}`;
+  const threadPart = ids.threadId ? `/threads/${ids.threadId}` : "";
+  return resolve(memoryRoot, scope + threadPart, "events", `${monthFromTimestamp(timestamp)}.jsonl`);
+}
+
+function rawOutboundFile(root, config, ids, timestamp) {
+  const memoryRoot = resolvePath(root, config.memoryDir);
+  const accountId = ids.accountId ?? "unknown";
+  const channelId = ids.channelId ?? "unknown";
+  const threadPart = ids.threadId ? `/threads/${ids.threadId}` : "";
+  return resolve(memoryRoot, `discord/raw/outbound/accounts/${accountId}/channels/${channelId}${threadPart}/events`, `${monthFromTimestamp(timestamp)}.jsonl`);
+}
+
+function openclawTurnFile(root, config, input) {
+  const memoryRoot = resolvePath(root, config.memoryDir);
+  const accountId = input.accountId ?? input.agentId ?? "unknown";
+  const sessionKey = safeSlug(input.sessionKey ?? input.channelId ?? input.threadId ?? "unknown");
+  return resolve(memoryRoot, `openclaw/turns/discord/accounts/${accountId}/sessions/${sessionKey}`, `${monthFromTimestamp(input.timestamp)}.jsonl`);
+}
+
+function transcriptDedupeKey(input) {
+  const stableId = input.messageId ?? simpleHash([input.timestamp, input.authorId, input.agentId, input.channelId, input.content].join("|"));
+  return `transcript:${input.provider}:${input.direction}:${input.channelId ?? "unknown"}:${stableId}`;
+}
+
+function rawDedupeKey(input, phase = "raw") {
+  const stableId = input.messageId ?? simpleHash([input.timestamp, input.authorId, input.channelId, input.content].join("|"));
+  return `${phase}:${input.provider}:${input.direction}:${input.channelId ?? "unknown"}:${stableId}`;
+}
+
+function turnDedupeKey(input, phase) {
+  const stableId = input.messageId ?? input.runId ?? simpleHash([input.timestamp, input.agentId, input.authorId, input.channelId, input.content].join("|"));
+  return `openclaw-turn:${phase}:${input.provider}:${input.direction}:${input.accountId ?? input.agentId ?? "unknown"}:${input.channelId ?? "unknown"}:${stableId}`;
+}
+
+function appendNormalizedTranscript({ root, config, goals, input }) {
+  if (!config.transcriptWriter) return { appended: false, reason: "transcript writer disabled" };
+  const group = resolveGroup(goals, input);
+  const file = transcriptFile(root, config, group, input, input.timestamp);
+  const result = appendJsonlUnique(file, { ...input, groupSlug: group?.slug }, transcriptDedupeKey(input));
+  return { ...result, groupSlug: group?.slug, channelId: input.channelId, group };
+}
+
+function appendDiscordRawInboundJournal({ root, config, input, event = {}, source = "hook" }) {
+  if (!config.discordRawJournal) return { appended: false, reason: "raw journal disabled" };
+  const file = rawInboundFile(root, config, input, input.timestamp);
+  return appendJsonlUnique(
+    file,
+    {
+      ...input,
+      source,
+      raw: readDiscordRawMessageData(event)
+    },
+    rawDedupeKey(input, "discord-raw-inbound")
+  );
+}
+
+function appendDiscordRawOutboundJournal({ root, config, input, event = {}, phase = "sent" }) {
+  if (!config.discordRawJournal) return { appended: false, reason: "raw journal disabled" };
+  const file = rawOutboundFile(root, config, input, input.timestamp);
+  return appendJsonlUnique(
+    file,
+    {
+      ...input,
+      phase,
+      raw: isObject(event) ? event : {}
+    },
+    rawDedupeKey(input, `discord-raw-outbound-${phase}`)
+  );
+}
+
+function appendOpenClawTurnJournal({ root, config, input, phase, event = {}, ctx = {}, outcome }) {
+  if (!config.openclawTurnJournal) return { appended: false, reason: "turn journal disabled" };
+  const file = openclawTurnFile(root, config, input);
+  return appendJsonlUnique(
+    file,
+    {
+      ...input,
+      phase,
+      outcome,
+      runId: input.runId,
+      context: {
+        agentId: firstString(ctx.agentId, ctx.agent_id, input.agentId),
+        messageProvider: firstString(ctx.messageProvider, ctx.provider, input.provider),
+        hook: phase
+      },
+      eventShape: Object.keys(isObject(event) ? event : {}).sort()
+    },
+    turnDedupeKey(input, phase)
+  );
 }
 
 function loadAgentRoleMap(root, config) {
@@ -423,11 +575,25 @@ function updateHostedTurnFromInbound({ root, config, input }) {
 export function buildMessageInput({ event = {}, ctx = {}, direction = "inbound" }) {
   const ids = resolveDiscordIds(event, ctx);
   const metadata = isObject(event.metadata) ? event.metadata : {};
+  const accountId = firstString(
+    event.accountId,
+    event.account_id,
+    metadata.accountId,
+    metadata.account_id,
+    ctx.accountId,
+    ctx.account_id,
+    ctx.agentId,
+    ctx.agent_id
+  );
   return {
     version: 1,
     timestamp: firstString(event.timestamp, event.createdAt, metadata.timestamp) ?? new Date().toISOString(),
     direction,
     provider: "discord",
+    source: "openclaw-hook",
+    accountId,
+    sessionKey: firstString(event.sessionKey, event.session_key, metadata.sessionKey, ctx.sessionKey, ctx.session_id, ids.threadId, ids.channelId),
+    runId: firstString(event.runId, event.run_id, metadata.runId, metadata.run_id, ctx.runId, ctx.run_id),
     guildId: ids.guildId,
     channelId: ids.channelId,
     threadId: ids.threadId,
@@ -436,6 +602,7 @@ export function buildMessageInput({ event = {}, ctx = {}, direction = "inbound" 
     authorLabel: firstString(event.authorLabel, event.author_label, event.senderName, metadata.authorLabel),
     authorType: event.authorType ?? (direction === "outbound" ? "agent" : undefined),
     agentId: direction === "outbound" ? firstString(ctx.agentId, ctx.agent_id) : firstString(event.agentId, event.agent_id),
+    replyToId: firstString(event.replyToId, event.reply_to_id, metadata.replyToId, metadata.reply_to_id),
     content: event.content ?? event.prompt ?? event.bodyForAgent ?? event.body ?? ""
   };
 }
@@ -561,15 +728,20 @@ function buildOnboardingReminderPrompt() {
 
 export function recordDiscordRawIngress({ root, event = {}, accountId, config = {} }) {
   const normalizedConfig = normalizePluginConfig(config);
-  if (!normalizedConfig.onboarding) return { handled: false, reason: "onboarding disabled" };
   const input = buildRawIngressInput({ event, accountId });
-  if (!input.guildId || !input.channelId || !input.messageId) {
-    return { handled: false, reason: "not a guild channel message", input };
+  if (!input.channelId || !input.messageId) {
+    return { handled: false, reason: "not a Discord channel message", input };
   }
 
   const goals = loadGoals(root, normalizedConfig);
   const group = resolveGroup(goals, input);
-  if (group) return { handled: true, mapped: true, groupSlug: group.slug, input };
+  const rawJournal = appendDiscordRawInboundJournal({ root, config: normalizedConfig, input, event, source: "discord-raw-ingress" });
+  const transcript = appendNormalizedTranscript({ root, config: normalizedConfig, goals, input });
+  const hostedTurn = updateHostedTurnFromInbound({ root, config: normalizedConfig, input });
+  if (!normalizedConfig.onboarding) {
+    return { handled: true, reason: "onboarding disabled", mapped: Boolean(group), groupSlug: group?.slug, input, rawJournal, transcript, hostedTurn };
+  }
+  if (group) return { handled: true, mapped: true, groupSlug: group.slug, input, rawJournal, transcript, hostedTurn };
 
   const onboardingDir = resolvePath(root, normalizedConfig.onboardingDir);
   const statePath = resolve(onboardingDir, `${input.channelId}.json`);
@@ -577,7 +749,7 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
   const now = new Date().toISOString();
   const hostAccountId = normalizedConfig.hostAccountId;
   if (previous && accountId !== hostAccountId) {
-    return { handled: true, mapped: false, created: false, path: statePath, state: previous, input };
+    return { handled: true, mapped: false, created: false, path: statePath, state: previous, input, rawJournal, transcript, hostedTurn };
   }
   const state = previous ?? {
     version: 1,
@@ -632,13 +804,15 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
     path: statePath,
     state,
     input,
+    rawJournal,
+    transcript,
+    hostedTurn,
     visiblePrompt
   };
 }
 
 export function appendHookTranscriptEvent({ root, event = {}, ctx = {}, config = {}, direction = "inbound" }) {
   const normalizedConfig = normalizePluginConfig(config);
-  if (!normalizedConfig.transcriptWriter) return { appended: false, reason: "transcript writer disabled" };
   if (!isDiscordHookContext(ctx)) return { appended: false, reason: "not a Discord hook context" };
 
   const goals = loadGoals(root, normalizedConfig);
@@ -646,13 +820,291 @@ export function appendHookTranscriptEvent({ root, event = {}, ctx = {}, config =
   const group = resolveGroup(goals, input);
   ensureOnboardingState({ root, config: normalizedConfig, ids: input, event, group });
 
-  const file = transcriptFile(root, normalizedConfig, group, input, input.timestamp);
-  mkdirSync(dirname(file), { recursive: true });
-  appendFileSync(file, `${JSON.stringify({ ...input, groupSlug: group?.slug })}\n`);
+  const rawJournal = direction === "inbound"
+    ? appendDiscordRawInboundJournal({ root, config: normalizedConfig, input, event, source: "message_received" })
+    : { appended: false, reason: "not inbound" };
+  const transcript = appendNormalizedTranscript({ root, config: normalizedConfig, goals, input });
   const hostedTurn = direction === "outbound"
     ? updateHostedTurnFromOutbound({ root, config: normalizedConfig, input })
     : updateHostedTurnFromInbound({ root, config: normalizedConfig, input });
-  return { appended: true, file, groupSlug: group?.slug, channelId: input.channelId, hostedTurn };
+  const phase = direction === "outbound" ? "output_result" : "accepted_input";
+  const turnJournal = appendOpenClawTurnJournal({ root, config: normalizedConfig, input, phase, event, ctx });
+  return {
+    appended: Boolean(transcript.appended),
+    duplicate: Boolean(transcript.duplicate),
+    file: transcript.file,
+    groupSlug: group?.slug,
+    channelId: input.channelId,
+    hostedTurn,
+    rawJournal,
+    turnJournal
+  };
+}
+
+export function recordOpenClawOutputIntent({ root, event = {}, ctx = {}, config = {} }) {
+  const normalizedConfig = normalizePluginConfig(config);
+  if (!isDiscordHookContext(ctx)) return { recorded: false, reason: "not a Discord hook context" };
+  const input = buildMessageInput({ event, ctx, direction: "outbound" });
+  const turnJournal = appendOpenClawTurnJournal({ root, config: normalizedConfig, input, phase: "output_intent", event, ctx });
+  return { recorded: Boolean(turnJournal.appended), duplicate: Boolean(turnJournal.duplicate), file: turnJournal.file, channelId: input.channelId };
+}
+
+export function recordOpenClawOutboundResult({ root, event = {}, ctx = {}, config = {} }) {
+  const normalizedConfig = normalizePluginConfig(config);
+  if (!isDiscordHookContext(ctx)) return { recorded: false, reason: "not a Discord hook context" };
+  const transcript = appendHookTranscriptEvent({ root, event, ctx, config: normalizedConfig, direction: "outbound" });
+  const input = buildMessageInput({ event, ctx, direction: "outbound" });
+  const rawJournal = appendDiscordRawOutboundJournal({ root, config: normalizedConfig, input, event, phase: "sent" });
+  return {
+    recorded: Boolean(transcript.appended || rawJournal.appended),
+    duplicate: Boolean(transcript.duplicate && rawJournal.duplicate),
+    file: transcript.file,
+    groupSlug: transcript.groupSlug,
+    channelId: input.channelId,
+    hostedTurn: transcript.hostedTurn,
+    rawJournal,
+    turnJournal: transcript.turnJournal
+  };
+}
+
+function discordAuthHeader(token) {
+  const text = firstString(token);
+  if (!text) return undefined;
+  return /^Bot\s+/i.test(text) ? text : `Bot ${text}`;
+}
+
+async function fetchDiscordJson(path, token, options = {}) {
+  const authorization = discordAuthHeader(token);
+  if (!authorization) throw new Error("missing Discord token");
+  const url = path.startsWith("http") ? path : `https://discord.com/api/v10${path}`;
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      Authorization: authorization,
+      "Content-Type": "application/json",
+      ...(options.headers ?? {})
+    }
+  });
+  const text = await response.text();
+  const body = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    const message = typeof body?.message === "string" ? body.message : response.statusText;
+    throw new Error(`Discord API ${response.status}: ${message}`);
+  }
+  return body;
+}
+
+function collectDiscordChannelIds(discordConfig = {}, selfCheck = {}) {
+  const channelIds = new Set();
+  for (const guild of Object.values(isObject(discordConfig.guilds) ? discordConfig.guilds : {})) {
+    for (const channelId of Object.keys(isObject(guild?.channels) ? guild.channels : {})) channelIds.add(channelId);
+  }
+  for (const account of Object.values(isObject(discordConfig.accounts) ? discordConfig.accounts : {})) {
+    for (const guild of Object.values(isObject(account?.guilds) ? account.guilds : {})) {
+      for (const channelId of Object.keys(isObject(guild?.channels) ? guild.channels : {})) channelIds.add(channelId);
+    }
+  }
+  if (selfCheck.setupChannelId) channelIds.add(selfCheck.setupChannelId);
+  return [...channelIds];
+}
+
+function collectDiscordCatchupTargets(openclawConfig = {}, config = normalizePluginConfig()) {
+  const discord = openclawConfig?.channels?.discord ?? {};
+  const accounts = isObject(discord.accounts) ? discord.accounts : {};
+  const account = accounts[config.hostAccountId] ?? accounts.default;
+  const token = firstString(account?.token);
+  const channelIds = collectDiscordChannelIds(discord, config.selfCheck);
+  if (!token || channelIds.length === 0) return [];
+  return [{ accountId: config.hostAccountId, token, channelIds }];
+}
+
+async function fetchChannelMessagesSince({ token, channelId, sinceMs, maxPages }) {
+  const messages = [];
+  let before;
+  for (let page = 0; page < maxPages; page += 1) {
+    const params = new URLSearchParams({ limit: "100" });
+    if (before) params.set("before", before);
+    const batch = await fetchDiscordJson(`/channels/${channelId}/messages?${params.toString()}`, token);
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    for (const message of batch) {
+      const timestampMs = Date.parse(message.timestamp ?? "");
+      if (Number.isFinite(timestampMs) && timestampMs >= sinceMs) messages.push(message);
+    }
+    const oldest = batch[batch.length - 1];
+    before = oldest?.id;
+    const oldestMs = Date.parse(oldest?.timestamp ?? "");
+    if (!before || (Number.isFinite(oldestMs) && oldestMs < sinceMs)) break;
+  }
+  return messages.reverse();
+}
+
+export async function runDiscordCatchup({ root, config = {}, openclawConfig = {}, logger, now = new Date() }) {
+  const normalizedConfig = normalizePluginConfig(config);
+  if (!normalizedConfig.catchup.enabled) return { skipped: true, reason: "catchup disabled" };
+  const sinceMs = now.getTime() - normalizedConfig.catchup.lookbackMinutes * 60 * 1000;
+  const targets = collectDiscordCatchupTargets(openclawConfig, normalizedConfig);
+  const summary = {
+    startedAt: now.toISOString(),
+    lookbackMinutes: normalizedConfig.catchup.lookbackMinutes,
+    targets: targets.length,
+    channels: 0,
+    fetched: 0,
+    rawAppended: 0,
+    transcriptAppended: 0,
+    duplicates: 0,
+    errors: []
+  };
+  for (const target of targets) {
+    for (const channelId of target.channelIds) {
+      summary.channels += 1;
+      try {
+        const messages = await fetchChannelMessagesSince({
+          token: target.token,
+          channelId,
+          sinceMs,
+          maxPages: normalizedConfig.catchup.maxPagesPerChannel
+        });
+        summary.fetched += messages.length;
+        for (const message of messages) {
+          const result = recordDiscordRawIngress({
+            root,
+            event: { ...message, channel_id: message.channel_id ?? channelId },
+            accountId: target.accountId,
+            config: normalizedConfig
+          });
+          if (result.rawJournal?.appended) summary.rawAppended += 1;
+          if (result.transcript?.appended) summary.transcriptAppended += 1;
+          if (result.rawJournal?.duplicate || result.transcript?.duplicate) summary.duplicates += 1;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger?.warn?.(`clawclave: catchup failed for channel ${channelId}: ${message}`);
+        summary.errors.push({ channelId, message });
+      }
+    }
+  }
+  summary.finishedAt = new Date().toISOString();
+  const statePath = resolve(resolvePath(root, normalizedConfig.memoryDir), "catchup/state.json");
+  writeJson(statePath, { version: 1, lastRun: summary });
+  return summary;
+}
+
+function truncateDiscordContent(value, maxLength = 1900) {
+  const text = String(value ?? "");
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 20)}\n... [truncated]`;
+}
+
+export function formatSelfCheckReport(report = {}) {
+  const errors = Array.isArray(report.catchup?.errors) ? report.catchup.errors : [];
+  return [
+    "Clawclave weekly persistence audit",
+    "",
+    `Status: ${errors.length === 0 ? "OK" : "NEEDS_ATTENTION"}`,
+    `Started: ${report.startedAt ?? "unknown"}`,
+    `Catchup lookback: ${report.catchup?.lookbackMinutes ?? "unknown"} minutes`,
+    `Channels scanned: ${report.catchup?.channels ?? 0}`,
+    `Discord messages fetched: ${report.catchup?.fetched ?? 0}`,
+    `Raw inbound appended: ${report.catchup?.rawAppended ?? 0}`,
+    `Normalized transcript appended: ${report.catchup?.transcriptAppended ?? 0}`,
+    `Duplicates skipped: ${report.catchup?.duplicates ?? 0}`,
+    errors.length > 0 ? `Errors: ${errors.slice(0, 5).map((error) => `${error.channelId}: ${error.message}`).join("; ")}` : "Errors: none",
+    "",
+    "Self-repair: Discord catchup was executed before this report, so recent missed provider-window messages were backfilled when reachable from Discord history."
+  ].join("\n");
+}
+
+async function findOrCreateSetupThread({ token, setupChannelId, threadName }) {
+  const channel = await fetchDiscordJson(`/channels/${setupChannelId}`, token);
+  const guildId = channel?.guild_id;
+  if (guildId) {
+    const active = await fetchDiscordJson(`/guilds/${guildId}/threads/active`, token);
+    const activeThread = Array.isArray(active?.threads) ? active.threads.find((thread) => thread.parent_id === setupChannelId && thread.name === threadName) : undefined;
+    if (activeThread?.id) return activeThread.id;
+  }
+  try {
+    const archived = await fetchDiscordJson(`/channels/${setupChannelId}/threads/archived/public?limit=100`, token);
+    const archivedThread = Array.isArray(archived?.threads) ? archived.threads.find((thread) => thread.name === threadName) : undefined;
+    if (archivedThread?.id) return archivedThread.id;
+  } catch {
+    // Some channel types or permissions do not expose archived public threads.
+  }
+  const created = await fetchDiscordJson(`/channels/${setupChannelId}/threads`, token, {
+    method: "POST",
+    body: JSON.stringify({ name: threadName, auto_archive_duration: 10080, type: 11 })
+  });
+  return created.id;
+}
+
+async function sendSelfCheckReportToSetup({ config, openclawConfig, report }) {
+  const discord = openclawConfig?.channels?.discord ?? {};
+  const accounts = isObject(discord.accounts) ? discord.accounts : {};
+  const account = accounts[config.hostAccountId] ?? accounts.default;
+  const token = firstString(account?.token);
+  if (!token) return { sent: false, reason: "missing Discord token" };
+  const setupChannelId = config.selfCheck.setupChannelId;
+  const threadId = await findOrCreateSetupThread({ token, setupChannelId, threadName: config.selfCheck.threadName });
+  await fetchDiscordJson(`/channels/${threadId}/messages`, token, {
+    method: "POST",
+    body: JSON.stringify({ content: truncateDiscordContent(formatSelfCheckReport(report)) })
+  });
+  return { sent: true, threadId };
+}
+
+export async function runWeeklySelfCheck({ root, config = {}, openclawConfig = {}, logger, force = false, now = new Date() }) {
+  const normalizedConfig = normalizePluginConfig(config);
+  if (!normalizedConfig.selfCheck.enabled) return { skipped: true, reason: "self-check disabled" };
+  const statePath = resolve(resolvePath(root, normalizedConfig.memoryDir), "self-check/state.json");
+  const state = readJson(statePath, { version: 1 });
+  const lastRunMs = Date.parse(state.lastRunAt ?? "");
+  const intervalMs = normalizedConfig.selfCheck.intervalHours * 60 * 60 * 1000;
+  if (!force && Number.isFinite(lastRunMs) && now.getTime() - lastRunMs < intervalMs) {
+    return { skipped: true, reason: "not due", nextRunAt: new Date(lastRunMs + intervalMs).toISOString() };
+  }
+  const report = {
+    version: 1,
+    startedAt: now.toISOString(),
+    catchup: await runDiscordCatchup({ root, config: normalizedConfig, openclawConfig, logger, now })
+  };
+  try {
+    report.delivery = await sendSelfCheckReportToSetup({ config: normalizedConfig, openclawConfig, report });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger?.warn?.(`clawclave: self-check report delivery failed: ${message}`);
+    report.delivery = { sent: false, error: message };
+  }
+  report.finishedAt = new Date().toISOString();
+  writeJson(statePath, {
+    version: 1,
+    lastRunAt: report.finishedAt,
+    lastReport: report
+  });
+  return report;
+}
+
+export function startClawclaveMaintenance({ root, config = {}, openclawConfig = {}, logger }) {
+  const normalizedConfig = normalizePluginConfig(config);
+  const timers = [];
+  const runCatchup = () => {
+    runDiscordCatchup({ root, config: normalizedConfig, openclawConfig, logger }).catch((error) => {
+      logger?.warn?.(`clawclave: catchup worker failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  };
+  const runSelfCheck = () => {
+    runWeeklySelfCheck({ root, config: normalizedConfig, openclawConfig, logger }).catch((error) => {
+      logger?.warn?.(`clawclave: self-check worker failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  };
+  if (normalizedConfig.catchup.enabled) {
+    timers.push(setTimeout(runCatchup, 90 * 1000));
+    timers.push(setInterval(runCatchup, normalizedConfig.catchup.intervalMinutes * 60 * 1000));
+  }
+  if (normalizedConfig.selfCheck.enabled) {
+    timers.push(setTimeout(runSelfCheck, 5 * 60 * 1000));
+    timers.push(setInterval(runSelfCheck, Math.min(normalizedConfig.selfCheck.intervalHours, 24) * 60 * 60 * 1000));
+  }
+  return () => {
+    for (const timer of timers) clearTimeout(timer);
+  };
 }
 
 function formatList(values) {

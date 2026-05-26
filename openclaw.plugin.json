@@ -40,6 +40,12 @@
       "transcriptWriter": {
         "type": "boolean"
       },
+      "discordRawJournal": {
+        "type": "boolean"
+      },
+      "openclawTurnJournal": {
+        "type": "boolean"
+      },
       "onboarding": {
         "type": "boolean"
       },
@@ -60,6 +66,50 @@
         "type": "integer",
         "minimum": 0,
         "maximum": 50
+      },
+      "catchup": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "lookbackMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10080
+          },
+          "intervalMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440
+          },
+          "maxPagesPerChannel": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          }
+        }
+      },
+      "selfCheck": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "intervalHours": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 720
+          },
+          "setupChannelId": {
+            "type": "string"
+          },
+          "threadName": {
+            "type": "string"
+          }
+        }
       }
     }
   },
@@ -104,6 +154,14 @@
       "label": "Record normalized transcripts",
       "help": "When true, Discord message hooks append normalized JSONL transcript events."
     },
+    "discordRawJournal": {
+      "label": "Record Discord raw journal",
+      "help": "When true, Clawclave stores raw Discord inbound and outbound evidence records."
+    },
+    "openclawTurnJournal": {
+      "label": "Record OpenClaw turn journal",
+      "help": "When true, Clawclave stores accepted input, output intent, and outbound result records."
+    },
     "onboarding": {
       "label": "Track unmapped channels",
       "help": "When true, unmapped Discord channels create pending onboarding state."
@@ -123,6 +181,14 @@
     "tailEvents": {
       "label": "Transcript tail events",
       "help": "Maximum recent transcript events to inject into prompt context."
+    },
+    "catchup": {
+      "label": "Discord catchup",
+      "help": "Periodically backfills recent Discord messages into raw and normalized journals."
+    },
+    "selfCheck": {
+      "label": "Weekly self-check",
+      "help": "Runs catchup, audits persistence coverage, and posts the report to a setup thread."
     }
   }
 }

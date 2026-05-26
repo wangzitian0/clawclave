@@ -12,6 +12,8 @@ Discord and need a clear source of truth for what each channel is for.
 - Injects Discord group context into OpenClaw agent prompts.
 - Detects unmapped Discord channels and creates onboarding state.
 - Records normalized inbound and outbound transcript events.
+- Records Discord raw journals and OpenClaw turn journals for evidence.
+- Runs Discord catchup and a weekly self-check report for missed-message repair.
 - Keeps group goals in a portable JSON source of truth.
 - Defines hosted discussion, participation, research, and onboarding contracts.
 - Audits discussion lifecycle state, communication contracts, and deprecated
@@ -58,11 +60,25 @@ Then add it to `openclaw.json`:
           "agentRoleMapFile": "workspace/agents/discord-agent-roles.json",
           "promptContext": true,
           "transcriptWriter": true,
+          "discordRawJournal": true,
+          "openclawTurnJournal": true,
           "onboarding": true,
           "hostedTurns": true,
           "hostedTurnMinWaitSeconds": 45,
           "hostedTurnMaxWaitSeconds": 120,
-          "tailEvents": 12
+          "tailEvents": 12,
+          "catchup": {
+            "enabled": true,
+            "lookbackMinutes": 180,
+            "intervalMinutes": 10,
+            "maxPagesPerChannel": 4
+          },
+          "selfCheck": {
+            "enabled": true,
+            "intervalHours": 168,
+            "setupChannelId": "123456789012345678",
+            "threadName": "Clawclave weekly persistence audit"
+          }
         },
         "hooks": {
           "allowPromptInjection": true
@@ -189,6 +205,21 @@ memory/clawclave/transcripts/
 
 This is not a replacement for raw Discord gateway logs. Treat it as the
 OpenClaw-facing, normalized transcript layer.
+
+## Persistence Journals
+
+Clawclave keeps four evidence layers when the corresponding options are enabled:
+
+- Discord inbound evidence: `memory/clawclave/discord/raw/...`
+- OpenClaw accepted input: `memory/clawclave/openclaw/turns/...`
+- OpenClaw output intent: `memory/clawclave/openclaw/turns/...`
+- Discord outbound result: `memory/clawclave/discord/raw/outbound/...`
+
+The plugin also runs periodic Discord catchup from recent channel history. This
+cannot observe messages that Discord no longer returns or channels the host
+account cannot read, but it repairs the common restart/provider-offline window.
+The weekly self-check runs catchup first, then posts a compact report to the
+configured setup thread, creating that thread when possible.
 
 ## Configuration
 

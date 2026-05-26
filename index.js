@@ -3,8 +3,11 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import {
   appendHookTranscriptEvent,
   buildPromptHookDecision,
+  recordOpenClawOutboundResult,
+  recordOpenClawOutputIntent,
   resolvePluginConfig,
-  resolveRootDir
+  resolveRootDir,
+  startClawclaveMaintenance
 } from "./src/runtime.js";
 
 function warn(api, message, error) {
@@ -21,6 +24,46 @@ export default definePluginEntry({
   name: "Clawclave",
   description: "Discord group operations and onboarding for OpenClaw",
   register(api) {
+    let stopMaintenance;
+
+    function openclawConfig(event, ctx) {
+      return ctx?.config ?? event?.config ?? api.config ?? {};
+    }
+
+    function stopWorkers() {
+      if (typeof stopMaintenance === "function") stopMaintenance();
+      stopMaintenance = undefined;
+    }
+
+    api.on(
+      "gateway_start",
+      async (event, ctx) => {
+        try {
+          stopWorkers();
+          const config = readConfig(event, api);
+          const root = resolveRootDir(api, config);
+          stopMaintenance = startClawclaveMaintenance({
+            root,
+            config,
+            openclawConfig: openclawConfig(event, ctx),
+            logger: api.logger
+          });
+          api.logger.info?.("clawclave: maintenance workers started");
+        } catch (error) {
+          warn(api, "gateway_start maintenance skipped", error);
+        }
+      },
+      { timeoutMs: 3000 }
+    );
+
+    api.on(
+      "gateway_stop",
+      async () => {
+        stopWorkers();
+      },
+      { timeoutMs: 3000 }
+    );
+
     api.on(
       "before_prompt_build",
       async (event, ctx) => {
@@ -63,10 +106,26 @@ export default definePluginEntry({
         try {
           const config = readConfig(event, api);
           const root = resolveRootDir(api, config);
-          const result = appendHookTranscriptEvent({ root, event, ctx, config, direction: "outbound" });
-          if (result.appended) api.logger.debug?.(`clawclave: recorded outbound event for ${result.groupSlug ?? "unmapped"}`);
+          const result = recordOpenClawOutboundResult({ root, event, ctx, config });
+          if (result.recorded) api.logger.debug?.(`clawclave: recorded outbound event for ${result.groupSlug ?? "unmapped"}`);
         } catch (error) {
           warn(api, "message_sent skipped", error);
+        }
+      },
+      { timeoutMs: 3000 }
+    );
+
+    api.on(
+      "message_sending",
+      async (event, ctx) => {
+        try {
+          const config = readConfig(event, api);
+          const root = resolveRootDir(api, config);
+          recordOpenClawOutputIntent({ root, event, ctx, config });
+          return undefined;
+        } catch (error) {
+          warn(api, "message_sending skipped", error);
+          return undefined;
         }
       },
       { timeoutMs: 3000 }

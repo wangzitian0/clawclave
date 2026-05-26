@@ -7,8 +7,11 @@ import test from "node:test";
 import {
   appendHookTranscriptEvent,
   buildPromptHookDecision,
+  formatSelfCheckReport,
   normalizePluginConfig,
   recordDiscordRawIngress,
+  recordOpenClawOutboundResult,
+  recordOpenClawOutputIntent,
   resolveDiscordIds
 } from "../src/runtime.js";
 
@@ -53,7 +56,21 @@ test("normalizePluginConfig uses marketplace-safe defaults", () => {
     hostedTurns: true,
     hostedTurnMinWaitSeconds: 45,
     hostedTurnMaxWaitSeconds: 120,
-    tailEvents: 50
+    tailEvents: 50,
+    discordRawJournal: true,
+    openclawTurnJournal: true,
+    catchup: {
+      enabled: true,
+      lookbackMinutes: 180,
+      intervalMinutes: 10,
+      maxPagesPerChannel: 4
+    },
+    selfCheck: {
+      enabled: true,
+      intervalHours: 168,
+      setupChannelId: "1477547786349187155",
+      threadName: "Clawclave weekly persistence audit"
+    }
   });
 });
 
@@ -174,6 +191,11 @@ test("raw ingress creates onboarding state and prompts only from host account", 
     const nonHost = recordDiscordRawIngress({ root, event, accountId: "other" });
     assert.equal(nonHost.handled, true);
     assert.equal(nonHost.visiblePrompt, undefined);
+    assert.equal(nonHost.rawJournal.appended, true);
+    assert.equal(nonHost.transcript.appended, true);
+    const duplicate = recordDiscordRawIngress({ root, event, accountId: "other" });
+    assert.equal(duplicate.rawJournal.duplicate, true);
+    assert.equal(duplicate.transcript.duplicate, true);
     const host = recordDiscordRawIngress({ root, event: { ...event, id: "raw-2" }, accountId: "host" });
     assert.match(host.visiblePrompt, /这个群还没有初始化目标/);
     const again = recordDiscordRawIngress({ root, event: { ...event, id: "raw-3" }, accountId: "host" });
@@ -219,6 +241,30 @@ test("raw ingress configures pending group from substantive host reply", () => {
   }
 });
 
+test("raw ingress persists Discord channel history without guild id", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const result = recordDiscordRawIngress({
+      root,
+      event: {
+        id: "history-1",
+        channel_id: "123",
+        timestamp: "2026-05-20T00:00:00.000Z",
+        content: "history message",
+        author: { id: "u1", username: "tester" }
+      },
+      accountId: "host"
+    });
+    assert.equal(result.handled, true);
+    assert.equal(result.rawJournal.appended, true);
+    assert.equal(result.transcript.appended, true);
+    assert.equal(result.groupSlug, "ops");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("raw ingress reminds pending host without letting non-host overwrite state", () => {
   const root = tempRoot();
   try {
@@ -256,9 +302,48 @@ test("transcript writer records normalized outbound events", () => {
     assert.equal(result.groupSlug, "ops");
     assert.match(readFileSync(result.file, "utf8"), /"direction":"outbound"/);
     assert.match(readFileSync(result.file, "utf8"), /"agentId":"host"/);
+    assert.equal(result.turnJournal.appended, true);
+    assert.match(readFileSync(result.turnJournal.file, "utf8"), /"phase":"output_result"/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("OpenClaw output intent and outbound result write separate journals", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const ctx = { messageProvider: "discord", channelId: "discord", agentId: "host" };
+    const event = { content: "done", messageId: "m3", metadata: { originatingTo: "123" } };
+    const intent = recordOpenClawOutputIntent({ root, event, ctx });
+    assert.equal(intent.recorded, true);
+    assert.match(readFileSync(intent.file, "utf8"), /"phase":"output_intent"/);
+    const result = recordOpenClawOutboundResult({ root, event, ctx });
+    assert.equal(result.recorded, true);
+    assert.equal(result.rawJournal.appended, true);
+    assert.match(readFileSync(result.rawJournal.file, "utf8"), /"phase":"sent"/);
+    assert.match(readFileSync(result.turnJournal.file, "utf8"), /"phase":"output_result"/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("self-check report summarizes catchup and errors", () => {
+  const report = formatSelfCheckReport({
+    startedAt: "2026-05-26T00:00:00.000Z",
+    catchup: {
+      lookbackMinutes: 180,
+      channels: 2,
+      fetched: 3,
+      rawAppended: 1,
+      transcriptAppended: 1,
+      duplicates: 2,
+      errors: [{ channelId: "123", message: "missing access" }]
+    }
+  });
+  assert.match(report, /NEEDS_ATTENTION/);
+  assert.match(report, /Channels scanned: 2/);
+  assert.match(report, /123: missing access/);
 });
 
 test("host outbound expert mentions create hosted turn state", () => {
