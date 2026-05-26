@@ -38,7 +38,7 @@
     "./thread-bindings-maintenance": "./src/thread-bindings-maintenance.js"
   },
   "bin": {
-    "clawclave": "./bin/clawclave.js"
+    "clawclave": "bin/clawclave.js"
   },
   "files": [
     "bin",

@@ -1,0 +1,39 @@
+name: Publish to npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      dist_tag:
+        description: npm distribution tag
+        required: true
+        default: latest
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish package
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: "24.x"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install -g npm@latest
+      - run: npm ci
+      - run: npm run verify
+      - run: npm run coverage:check
+      - run: npm run pack:dry-run
+      - name: Publish
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+          NPM_DIST_TAG: ${{ github.event.inputs.dist_tag || 'latest' }}
+        run: npm publish --access public --tag "$NPM_DIST_TAG"

@@ -23,14 +23,41 @@ checks and test suite before uploading.
 
    A 404 means the unscoped package name is available.
 
-2. Authenticate with an npm account that owns the package:
+2. Configure npm trusted publishing for GitHub Actions if npm already exposes
+   package settings for `clawclave`:
+
+   - package: `clawclave`
+   - owner/repository: `wangzitian0/clawclave`
+   - workflow: `publish.yml`
+   - environment: `npm`
+
+   Trusted publishing uses GitHub Actions OIDC instead of a long-lived npm
+   token. The publish workflow grants `id-token: write`, runs on a
+   GitHub-hosted runner, and uses Node.js 24 with npm 11.
+
+3. If this is the first-ever publish and npm does not yet expose package
+   settings for `clawclave`, authenticate locally and publish once:
 
    ```bash
    npm login
    npm whoami
+   npm publish --access public
    ```
 
-3. Publish the first public version:
+   After the package exists, configure trusted publishing before publishing the
+   next version.
+
+4. Publish later public versions from GitHub Actions:
+
+   - open Actions -> Publish to npm
+   - run workflow on `main`
+   - keep the distribution tag as `latest`
+
+   The workflow runs `npm ci`, `npm run verify`, `npm run coverage:check`, and
+   `npm run pack:dry-run` before publishing.
+
+5. Manual fallback after first publish, only if trusted publishing is
+   unavailable:
 
    ```bash
    npm publish --access public
@@ -38,10 +65,14 @@ checks and test suite before uploading.
 
 ## Provenance
 
-Prefer GitHub Actions trusted publishing or `npm publish --provenance` from a
-supported cloud runner for release builds. Local manual publishing is acceptable
-for a first private test release, but it will not provide the same provenance
-signal.
+Prefer GitHub Actions trusted publishing for release builds. npm automatically
+generates provenance attestations for public packages published from public
+GitHub repositories through trusted publishing.
+
+If trusted publishing is not available and a token-based workflow must be used,
+use `npm publish --provenance --access public` from a supported cloud runner.
+Local manual publishing is acceptable only as a fallback and will not provide
+the same provenance signal.
 
 ## Coverage
 
@@ -71,6 +102,7 @@ that `wangzitian0/clawclave` is enabled. Do not commit Coveralls repo tokens.
 
 - Keep `README.md`, `LICENSE`, `SECURITY.md`, and `CHANGELOG.md` current.
 - Bump `package.json` with semver before every publish.
+- Commit `package-lock.json` and use `npm ci` in CI and release workflows.
 - Run `npm pack --dry-run` and inspect the tarball file list.
 - Do not publish runtime credentials, local state, transcripts, or host-specific
   OpenClaw volume data.
