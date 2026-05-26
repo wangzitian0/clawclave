@@ -2,6 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/clawclave.svg)](https://www.npmjs.com/package/clawclave)
 [![CI](https://github.com/wangzitian0/clawclave/actions/workflows/ci.yml/badge.svg)](https://github.com/wangzitian0/clawclave/actions/workflows/ci.yml)
+[![Coverage Status](https://coveralls.io/repos/github/wangzitian0/clawclave/badge.svg?branch=main)](https://coveralls.io/github/wangzitian0/clawclave?branch=main)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node: >=20](https://img.shields.io/badge/node-%3E%3D20-339933.svg)](package.json)
 [![OpenClaw plugin](https://img.shields.io/badge/OpenClaw-plugin-111827.svg)](openclaw.plugin.json)
@@ -313,6 +314,9 @@ npm test
 npm run coverage
 npm run pack:dry-run
 ```
+
+`npm run coverage` writes `coverage/lcov.info`, which the GitHub Actions
+workflow uploads to Coveralls.
 
 This repository is intentionally dependency-light. The runtime uses Node.js
 built-ins and OpenClaw's plugin entry API.
