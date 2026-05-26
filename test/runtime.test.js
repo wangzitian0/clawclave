@@ -12,7 +12,9 @@ import {
   recordDiscordRawIngress,
   recordOpenClawOutboundResult,
   recordOpenClawOutputIntent,
-  resolveDiscordIds
+  resolveDiscordIds,
+  runDiscordCatchup,
+  runWeeklySelfCheck
 } from "../src/runtime.js";
 
 function tempRoot() {
@@ -38,6 +40,49 @@ function writeGoals(root) {
       ]
     }, null, 2)}\n`
   );
+}
+
+function mockJsonResponse(body, init = {}) {
+  return new Response(JSON.stringify(body), {
+    status: init.status ?? 200,
+    statusText: init.statusText ?? "OK",
+    headers: { "content-type": "application/json" }
+  });
+}
+
+async function withMockFetch(handler, run) {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    return handler(String(url), options, calls.length);
+  };
+  try {
+    return await run(calls);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+function openclawConfigForCatchup(channelId = "123") {
+  return {
+    channels: {
+      discord: {
+        guilds: {
+          "*": {
+            channels: {
+              [channelId]: {}
+            }
+          }
+        },
+        accounts: {
+          host: {
+            token: "test-token"
+          }
+        }
+      }
+    }
+  };
 }
 
 test("normalizePluginConfig uses marketplace-safe defaults", () => {
@@ -344,6 +389,222 @@ test("self-check report summarizes catchup and errors", () => {
   assert.match(report, /NEEDS_ATTENTION/);
   assert.match(report, /Channels scanned: 2/);
   assert.match(report, /123: missing access/);
+});
+
+test("runDiscordCatchup backfills recent Discord history and skips old messages", async () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const now = new Date("2026-05-26T08:00:00.000Z");
+    await withMockFetch((url, options) => {
+      assert.equal(options.headers.Authorization, "Bot test-token");
+      if (url.includes("/channels/123/messages?")) {
+        return mockJsonResponse([
+          {
+            id: "recent-2",
+            channel_id: "123",
+            timestamp: "2026-05-26T07:59:00.000Z",
+            content: "second",
+            author: { id: "u2", username: "two" }
+          },
+          {
+            id: "recent-1",
+            channel_id: "123",
+            timestamp: "2026-05-26T07:58:00.000Z",
+            content: "first",
+            author: { id: "u1", username: "one" }
+          },
+          {
+            id: "old-1",
+            channel_id: "123",
+            timestamp: "2026-05-26T04:00:00.000Z",
+            content: "old",
+            author: { id: "u3", username: "old" }
+          }
+        ]);
+      }
+      throw new Error(`unexpected URL ${url}`);
+    }, async (calls) => {
+      const summary = await runDiscordCatchup({
+        root,
+        openclawConfig: openclawConfigForCatchup("123"),
+        config: {
+          hostAccountId: "host",
+          selfCheck: { setupChannelId: "123" },
+          catchup: { lookbackMinutes: 180, maxPagesPerChannel: 3 }
+        },
+        now
+      });
+      assert.equal(calls.length, 1);
+      assert.equal(summary.channels, 1);
+      assert.equal(summary.fetched, 2);
+      assert.equal(summary.rawAppended, 2);
+      assert.equal(summary.transcriptAppended, 2);
+      assert.equal(summary.errors.length, 0);
+      const state = JSON.parse(readFileSync(resolve(root, "memory/clawclave/catchup/state.json"), "utf8"));
+      assert.equal(state.lastRun.fetched, 2);
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runDiscordCatchup reports channel errors without aborting all channels", async () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const openclawConfig = {
+      channels: {
+        discord: {
+          guilds: {
+            "*": {
+              channels: {
+                "123": {},
+                "456": {}
+              }
+            }
+          },
+          accounts: {
+            host: { token: "Bot already-prefixed" }
+          }
+        }
+      }
+    };
+    const warnings = [];
+    await withMockFetch((url, options) => {
+      assert.equal(options.headers.Authorization, "Bot already-prefixed");
+      if (url.includes("/channels/123/messages?")) {
+        return mockJsonResponse([
+          {
+            id: "ok-1",
+            channel_id: "123",
+            timestamp: "2026-05-26T07:59:00.000Z",
+            content: "ok",
+            author: { id: "u1", username: "one" }
+          }
+        ]);
+      }
+      if (url.includes("/channels/456/messages?")) {
+        return mockJsonResponse({ message: "Missing Access" }, { status: 403, statusText: "Forbidden" });
+      }
+      throw new Error(`unexpected URL ${url}`);
+    }, async () => {
+      const summary = await runDiscordCatchup({
+        root,
+        openclawConfig,
+        config: {
+          hostAccountId: "host",
+          selfCheck: { setupChannelId: "123" },
+          catchup: { lookbackMinutes: 180, maxPagesPerChannel: 1 }
+        },
+        logger: { warn: (message) => warnings.push(message) },
+        now: new Date("2026-05-26T08:00:00.000Z")
+      });
+      assert.equal(summary.channels, 2);
+      assert.equal(summary.fetched, 1);
+      assert.equal(summary.rawAppended, 1);
+      assert.equal(summary.errors.length, 1);
+      assert.equal(summary.errors[0].channelId, "456");
+      assert.match(summary.errors[0].message, /Discord API 403/);
+      assert.equal(warnings.length, 1);
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runDiscordCatchup can be disabled", async () => {
+  const root = tempRoot();
+  try {
+    const result = await runDiscordCatchup({
+      root,
+      config: { catchup: { enabled: false } },
+      openclawConfig: openclawConfigForCatchup("123")
+    });
+    assert.equal(result.skipped, true);
+    assert.equal(result.reason, "catchup disabled");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runWeeklySelfCheck skips when the previous report is still fresh", async () => {
+  const root = tempRoot();
+  try {
+    mkdirSync(resolve(root, "memory/clawclave/self-check"), { recursive: true });
+    writeFileSync(
+      resolve(root, "memory/clawclave/self-check/state.json"),
+      `${JSON.stringify({ version: 1, lastRunAt: "2026-05-26T07:00:00.000Z" }, null, 2)}\n`
+    );
+    const result = await runWeeklySelfCheck({
+      root,
+      config: { selfCheck: { intervalHours: 168 } },
+      openclawConfig: openclawConfigForCatchup("123"),
+      now: new Date("2026-05-26T08:00:00.000Z")
+    });
+    assert.equal(result.skipped, true);
+    assert.equal(result.reason, "not due");
+    assert.equal(result.nextRunAt, "2026-06-02T07:00:00.000Z");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runWeeklySelfCheck creates setup thread and posts report", async () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const posted = [];
+    await withMockFetch((url, options) => {
+      if (url.endsWith("/channels/123/messages?limit=100")) {
+        return mockJsonResponse([]);
+      }
+      if (url.endsWith("/channels/setup/messages?limit=100")) {
+        return mockJsonResponse([]);
+      }
+      if (url.endsWith("/channels/setup")) {
+        return mockJsonResponse({ id: "setup", guild_id: "guild-1" });
+      }
+      if (url.endsWith("/guilds/guild-1/threads/active")) {
+        return mockJsonResponse({ threads: [] });
+      }
+      if (url.endsWith("/channels/setup/threads/archived/public?limit=100")) {
+        return mockJsonResponse({ threads: [] });
+      }
+      if (url.endsWith("/channels/setup/threads")) {
+        assert.equal(options.method, "POST");
+        const body = JSON.parse(options.body);
+        assert.equal(body.name, "Weekly Audit");
+        return mockJsonResponse({ id: "thread-1" });
+      }
+      if (url.endsWith("/channels/thread-1/messages")) {
+        assert.equal(options.method, "POST");
+        posted.push(JSON.parse(options.body));
+        return mockJsonResponse({ id: "posted-1" });
+      }
+      throw new Error(`unexpected URL ${url}`);
+    }, async () => {
+      const report = await runWeeklySelfCheck({
+        root,
+        config: {
+          hostAccountId: "host",
+          selfCheck: { setupChannelId: "setup", threadName: "Weekly Audit" },
+          catchup: { lookbackMinutes: 180, maxPagesPerChannel: 1 }
+        },
+        openclawConfig: openclawConfigForCatchup("123"),
+        force: true,
+        now: new Date("2026-05-26T08:00:00.000Z")
+      });
+      assert.deepEqual(report.delivery, { sent: true, threadId: "thread-1" });
+      assert.equal(posted.length, 1);
+      assert.match(posted[0].content, /Clawclave weekly persistence audit/);
+      assert.match(posted[0].content, /Status: OK/);
+      const state = JSON.parse(readFileSync(resolve(root, "memory/clawclave/self-check/state.json"), "utf8"));
+      assert.equal(state.lastReport.delivery.threadId, "thread-1");
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("host outbound expert mentions create hosted turn state", () => {

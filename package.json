@@ -57,7 +57,10 @@
   "scripts": {
     "test": "node --test",
     "coverage": "node --test --experimental-test-coverage",
-    "check": "node --check index.js && node --check src/runtime.js && node --check src/group-workspace.js && node --check src/sync-group-goals.js && node --check src/onboard-discord-group.js && node --check src/audit-discord-group-runtime.js && node --check src/discussion-audits.js && node --check src/audit-discussion-lifecycle.js && node --check src/audit-communication-contracts.js && node --check src/audit-group-orchestration-rules.js && node --check src/thread-bindings-maintenance.js && node --check bin/clawclave.js"
+    "check": "node --check index.js && node --check src/runtime.js && node --check src/group-workspace.js && node --check src/sync-group-goals.js && node --check src/onboard-discord-group.js && node --check src/audit-discord-group-runtime.js && node --check src/discussion-audits.js && node --check src/audit-discussion-lifecycle.js && node --check src/audit-communication-contracts.js && node --check src/audit-group-orchestration-rules.js && node --check src/thread-bindings-maintenance.js && node --check bin/clawclave.js && node --check test/runtime.test.js",
+    "verify": "npm run check && npm test",
+    "pack:dry-run": "npm pack --dry-run",
+    "prepublishOnly": "npm run verify"
   },
   "openclaw": {
     "extensions": [
@@ -73,7 +76,8 @@
     }
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "engines": {
     "node": ">=20"
