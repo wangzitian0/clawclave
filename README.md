@@ -1,11 +1,31 @@
 # Clawclave
 
-Discord group operations for OpenClaw.
+[![npm version](https://img.shields.io/npm/v/clawclave.svg)](https://www.npmjs.com/package/clawclave)
+[![CI](https://github.com/wangzitian0/clawclave/actions/workflows/ci.yml/badge.svg)](https://github.com/wangzitian0/clawclave/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![node: >=20](https://img.shields.io/badge/node-%3E%3D20-339933.svg)](package.json)
+[![OpenClaw plugin](https://img.shields.io/badge/OpenClaw-plugin-111827.svg)](openclaw.plugin.json)
+
+Discord group operations, onboarding, and evidence journals for OpenClaw.
 
 Clawclave is an OpenClaw native plugin that helps Discord-based agent teams keep
 group goals, onboarding state, and conversation transcripts organized as
 data-as-code. It is designed for operators who run multiple OpenClaw agents in
 Discord and need a clear source of truth for what each channel is for.
+
+Status: pre-1.0. The public plugin API is intended to be small and stable, but
+configuration defaults may still change as OpenClaw Discord workflows mature.
+
+## Why Clawclave
+
+OpenClaw can already talk to Discord. Clawclave adds the missing operations
+layer for long-lived Discord agent groups:
+
+- What is this channel for?
+- Which host account is allowed to initialize or route work?
+- Which messages became OpenClaw inputs and outputs?
+- Did a restart window drop Discord messages, and can we backfill them?
+- Can group memory be reviewed in Git instead of living only in chat history?
 
 ## What It Does
 
@@ -23,6 +43,52 @@ Discord and need a clear source of truth for what each channel is for.
 Clawclave does not replace the official Discord channel plugin. It sits beside
 `@openclaw/discord` and adds group operations on top of Discord message flows.
 
+## Quick Start
+
+Install from npm after the package is published:
+
+```bash
+mkdir -p ~/.openclaw/plugins
+npm install --prefix ~/.openclaw/plugins clawclave
+```
+
+Then point OpenClaw at the installed package:
+
+```json
+{
+  "plugins": {
+    "allow": ["clawclave"],
+    "load": {
+      "paths": ["~/.openclaw/plugins/node_modules/clawclave"]
+    },
+    "entries": {
+      "clawclave": {
+        "enabled": true,
+        "config": {
+          "rootDir": "~/.openclaw",
+          "goalsFile": "workspace/groups/company-goals.json",
+          "memoryDir": "memory/clawclave",
+          "hostAccountId": "host",
+          "promptContext": true,
+          "transcriptWriter": true,
+          "discordRawJournal": true,
+          "openclawTurnJournal": true,
+          "onboarding": true,
+          "hostedTurns": true
+        },
+        "hooks": {
+          "allowPromptInjection": true
+        }
+      }
+    }
+  }
+}
+```
+
+Restart OpenClaw and send a message in a mapped Discord channel. If the channel
+is not mapped, Clawclave creates onboarding state and the configured host agent
+asks for the channel goal.
+
 ## Use Cases
 
 - New Discord channel onboarding for agent communities.
@@ -33,7 +99,7 @@ Clawclave does not replace the official Discord channel plugin. It sits beside
 
 ## Installation
 
-Clone or install this plugin into your OpenClaw data directory:
+For active development, clone this plugin into your OpenClaw data directory:
 
 ```bash
 git clone git@github.com:wangzitian0/clawclave.git ~/.openclaw/plugins/clawclave
@@ -225,18 +291,45 @@ configured setup thread, creating that thread when possible.
 
 See [docs/configuration.md](docs/configuration.md).
 
+## Operations
+
+See [docs/operations.md](docs/operations.md) for the runtime file layout,
+persistence guarantees, and self-check behavior.
+
 ## Onboarding Design
 
 See [docs/onboarding-flow.md](docs/onboarding-flow.md).
 
+## Publishing
+
+See [docs/publishing.md](docs/publishing.md). The package uses `prepublishOnly`
+to run syntax checks and tests before `npm publish`.
+
 ## Development
 
 ```bash
+npm run verify
 npm test
+npm run coverage
+npm run pack:dry-run
 ```
 
 This repository is intentionally dependency-light. The runtime uses Node.js
 built-ins and OpenClaw's plugin entry API.
+
+## Support Matrix
+
+- Node.js: 20 or newer.
+- OpenClaw: `>=2026.5.3` as an optional peer dependency.
+- Discord: requires an OpenClaw Discord setup with readable channel history for
+  catchup/self-check repair.
+
+## Security And Privacy
+
+Clawclave never needs Discord tokens in this repository. Runtime credentials
+belong in your OpenClaw deployment. Transcript and raw journal files can contain
+private user messages, so treat generated `memory/clawclave/**` data as private
+unless you have reviewed and redacted it. See [SECURITY.md](SECURITY.md).
 
 ## Keywords
 
