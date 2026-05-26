@@ -58,6 +58,15 @@ branch Coveralls report.
 `npm run coverage:check` uses the same full-source coverage scope and fails if
 global statements, branches, functions, or lines fall below 50%.
 
+The CI workflow also supports manual runs through `workflow_dispatch` so a
+maintainer can verify coverage before release even when a GitHub event does not
+start automatically.
+
+For a public GitHub repository, the Coveralls GitHub Action can create the
+Coveralls repository on first successful upload. If the badge still reports
+unknown coverage after CI runs, sign in to Coveralls with GitHub and confirm
+that `wangzitian0/clawclave` is enabled. Do not commit Coveralls repo tokens.
+
 ## Release Hygiene
 
 - Keep `README.md`, `LICENSE`, `SECURITY.md`, and `CHANGELOG.md` current.
