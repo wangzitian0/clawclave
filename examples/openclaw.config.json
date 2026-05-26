@@ -15,14 +15,28 @@
           "hostedTurnsDir": "workspace/groups/discussions/active",
           "eventsDir": "workspace/groups/discussions/events",
           "agentRoleMapFile": "workspace/agents/discord-agent-roles.json",
-          "hostAccountId": "tianclaw",
+          "hostAccountId": "host",
           "promptContext": true,
           "transcriptWriter": true,
+          "discordRawJournal": true,
+          "openclawTurnJournal": true,
           "onboarding": true,
           "hostedTurns": true,
           "hostedTurnMinWaitSeconds": 45,
           "hostedTurnMaxWaitSeconds": 120,
-          "tailEvents": 12
+          "tailEvents": 12,
+          "catchup": {
+            "enabled": true,
+            "lookbackMinutes": 180,
+            "intervalMinutes": 10,
+            "maxPagesPerChannel": 4
+          },
+          "selfCheck": {
+            "enabled": true,
+            "intervalHours": 168,
+            "setupChannelId": "123456789012345678",
+            "threadName": "Clawclave weekly persistence audit"
+          }
         },
         "hooks": {
           "allowPromptInjection": true
