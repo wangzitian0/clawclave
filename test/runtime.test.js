@@ -245,6 +245,23 @@ test("raw ingress creates onboarding state and prompts only from host account", 
     assert.equal(duplicate.transcript.duplicate, true);
     const host = recordDiscordRawIngress({ root, event: { ...event, id: "raw-2" }, accountId: "host" });
     assert.match(host.visiblePrompt, /这个群还没有初始化目标/);
+    assert.equal(host.outputIntent.turnJournal.appended, true);
+    assert.match(readFileSync(host.outputIntent.turnJournal.file, "utf8"), /"checkpoint":"openclaw_output"/);
+    const delivered = recordDiscordRawIngress({
+      root,
+      event: {
+        ...event,
+        id: "bot-1",
+        content: host.visiblePrompt,
+        author: { id: "bot-1", username: "TianClaws", bot: true }
+      },
+      accountId: "other"
+    });
+    assert.equal(delivered.outputDelivery.matched, true);
+    assert.equal(delivered.outputDelivery.rawJournal.appended, true);
+    assert.match(readFileSync(delivered.outputDelivery.rawJournal.file, "utf8"), /"checkpoint":"discord_output"/);
+    assert.match(readFileSync(delivered.outputDelivery.turnJournal.file, "utf8"), /"phase":"output_result"/);
+    assert.match(readFileSync(delivered.outputDelivery.turnJournal.file, "utf8"), /"checkpoint":"discord_output"/);
     const again = recordDiscordRawIngress({ root, event: { ...event, id: "raw-3" }, accountId: "host" });
     assert.match(again.visiblePrompt, /等待目标确认/);
   } finally {
@@ -525,7 +542,7 @@ test("runDiscordCatchup scans drift-discovered channels from goals and onboardin
     mkdirSync(resolve(root, "workspace/groups/onboarding/active"), { recursive: true });
     writeFileSync(
       resolve(root, "workspace/groups/onboarding/active/456.json"),
-      `${JSON.stringify({ version: 1, channelId: "456", status: "pending_goal" }, null, 2)}\n`
+      `${JSON.stringify({ version: 1, channelId: "456", firstMessageId: "m456", status: "pending_goal" }, null, 2)}\n`
     );
     const fetchedChannels = [];
     await withMockFetch((url) => {
@@ -657,8 +674,16 @@ test("runDriftAudit reports key-path and catchup target drift without model call
     mkdirSync(resolve(root, "workspace/groups/onboarding/active"), { recursive: true });
     writeFileSync(
       resolve(root, "workspace/groups/onboarding/active/456.json"),
-      `${JSON.stringify({ channelId: "456", status: "pending_goal" }, null, 2)}\n`
+      `${JSON.stringify({ channelId: "456", firstMessageId: "m456", status: "pending_goal" }, null, 2)}\n`
     );
+    writeFileSync(
+      resolve(root, "workspace/groups/onboarding/active/1476887475770228827.json"),
+      `${JSON.stringify({ channelId: "1476887475770228827", status: "pending_goal" }, null, 2)}\n`
+    );
+    mkdirSync(resolve(root, "memory/clawclave/transcripts/channels/1476887475770228827"), { recursive: true });
+    writeFileSync(resolve(root, "memory/clawclave/transcripts/channels/1476887475770228827/2026-05.jsonl"), "{}\n");
+    mkdirSync(resolve(root, "memory/clawclave/discord/raw/guilds/1/channels/321/events"), { recursive: true });
+    writeFileSync(resolve(root, "memory/clawclave/discord/raw/guilds/1/channels/321/events/2026-05.jsonl"), "{}\n");
     const report = runDriftAudit({
       root,
       config: { selfCheck: { setupChannelId: "789" } },
@@ -667,8 +692,10 @@ test("runDriftAudit reports key-path and catchup target drift without model call
     assert.equal(report.status, "WARN");
     assert.equal(report.sources.goalChannels, 1);
     assert.equal(report.sources.onboardingChannels, 1);
-    assert.equal(report.sources.catchupTargets, 3);
+    assert.equal(report.sources.memoryChannels, 1);
+    assert.equal(report.sources.catchupTargets, 4);
     assert.ok(report.issues.some((issue) => issue.code === "channels_discovered_outside_config"));
+    assert.equal(report.discoveredOutsideConfig.includes("1476887475770228827"), false);
     assert.deepEqual(report.checkpointContract.map((item) => item.checkpoint), [
       "discord_input",
       "openclaw_input",
