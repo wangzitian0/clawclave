@@ -241,6 +241,7 @@ clawclave audit-discord-group-runtime
 clawclave audit-discussion-lifecycle
 clawclave audit-communication-contracts
 clawclave audit-group-orchestration-rules
+clawclave self-check --root /home/node/.openclaw --force
 clawclave prune-expired-discord-thread-bindings --check
 ```
 
@@ -287,7 +288,9 @@ cannot observe messages that Discord no longer returns or channels the host
 account cannot read, but it repairs the common restart/provider-offline window.
 The daily self-check runs catchup first, audits key-path drift, then posts a
 compact report to the configured setup thread, creating that thread when
-possible.
+possible. Operators can also run it explicitly with `clawclave self-check`; use
+`--no-delivery --json` for CI or dry-run evidence that should not post to
+Discord.
 
 ## Configuration
 

@@ -10,6 +10,7 @@ const commands = {
   "audit-discussion-lifecycle": "../src/audit-discussion-lifecycle.js",
   "audit-communication-contracts": "../src/audit-communication-contracts.js",
   "audit-group-orchestration-rules": "../src/audit-group-orchestration-rules.js",
+  "self-check": "../src/self-check.js",
   "prune-expired-discord-thread-bindings": "../src/thread-bindings-maintenance.js"
 };
 
@@ -24,6 +25,7 @@ Commands:
   audit-discussion-lifecycle
   audit-communication-contracts
   audit-group-orchestration-rules
+  self-check
   prune-expired-discord-thread-bindings
 `;
 }
