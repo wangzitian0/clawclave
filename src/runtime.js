@@ -27,12 +27,14 @@ const DEFAULT_CONFIG = {
   openclawTurnJournal: true,
   catchup: {
     enabled: true,
+    initialDelayMinutes: 10,
     lookbackMinutes: 180,
     intervalMinutes: 10,
     maxPagesPerChannel: 4
   },
   selfCheck: {
     enabled: true,
+    initialDelayMinutes: 15,
     intervalHours: 24,
     setupChannelId: "1477547786349187155",
     threadName: "Clawclave daily persistence audit"
@@ -73,7 +75,7 @@ function readJson(path, fallback) {
 
 function writeJson(path, value) {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+  writeFileSync(path, `${JSON.stringify(makeJsonSafe(value), null, 2)}\n`);
 }
 
 function appendJsonlUnique(path, record, key) {
@@ -83,8 +85,29 @@ function appendJsonlUnique(path, record, key) {
   if (marker && existing.includes(marker)) {
     return { appended: false, duplicate: true, file: path };
   }
-  appendFileSync(path, `${JSON.stringify({ dedupeKey: key, ...record })}\n`);
+  appendFileSync(path, `${JSON.stringify(makeJsonSafe({ dedupeKey: key, ...record }))}\n`);
   return { appended: true, duplicate: false, file: path };
+}
+
+function makeJsonSafe(value, seen = new WeakSet(), depth = 0) {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "bigint") return String(value);
+  if (typeof value === "undefined" || typeof value === "function" || typeof value === "symbol") return undefined;
+  if (value instanceof Date) return value.toISOString();
+  if (depth > 12) return "[MaxDepth]";
+  if (Array.isArray(value)) return value.map((item) => makeJsonSafe(item, seen, depth + 1));
+  if (typeof value === "object") {
+    if (seen.has(value)) return "[Circular]";
+    seen.add(value);
+    const output = {};
+    for (const [key, item] of Object.entries(value)) {
+      const safe = makeJsonSafe(item, seen, depth + 1);
+      if (typeof safe !== "undefined") output[key] = safe;
+    }
+    seen.delete(value);
+    return output;
+  }
+  return String(value);
 }
 
 function simpleHash(value) {
@@ -141,6 +164,7 @@ function normalizeCatchupConfig(value) {
   const config = isObject(value) ? value : {};
   return {
     enabled: config.enabled !== false,
+    initialDelayMinutes: clampInteger(config.initialDelayMinutes, DEFAULT_CONFIG.catchup.initialDelayMinutes, 1, 1440),
     lookbackMinutes: clampInteger(config.lookbackMinutes, DEFAULT_CONFIG.catchup.lookbackMinutes, 1, 10080),
     intervalMinutes: clampInteger(config.intervalMinutes, DEFAULT_CONFIG.catchup.intervalMinutes, 1, 1440),
     maxPagesPerChannel: clampInteger(config.maxPagesPerChannel, DEFAULT_CONFIG.catchup.maxPagesPerChannel, 1, 20)
@@ -151,6 +175,7 @@ function normalizeSelfCheckConfig(value) {
   const config = isObject(value) ? value : {};
   return {
     enabled: config.enabled !== false,
+    initialDelayMinutes: clampInteger(config.initialDelayMinutes, DEFAULT_CONFIG.selfCheck.initialDelayMinutes, 1, 1440),
     intervalHours: clampInteger(config.intervalHours, DEFAULT_CONFIG.selfCheck.intervalHours, 1, 24 * 30),
     setupChannelId: firstString(config.setupChannelId) ?? DEFAULT_CONFIG.selfCheck.setupChannelId,
     threadName: firstString(config.threadName) ?? DEFAULT_CONFIG.selfCheck.threadName
@@ -248,11 +273,11 @@ export function resolveDiscordIds(event = {}, ctx = {}) {
 function readDiscordRawMessageData(event = {}) {
   try {
     const raw = event?.message?.rawData;
-    if (raw && typeof raw === "object") return raw;
+    if (raw && typeof raw === "object") return makeJsonSafe(raw);
   } catch {
     return {};
   }
-  return isObject(event) ? event : {};
+  return isObject(event) ? makeJsonSafe(event) : {};
 }
 
 function buildRawIngressInput({ event = {}, accountId }) {
@@ -998,7 +1023,12 @@ async function fetchDiscordJson(path, token, options = {}) {
     }
   });
   const text = await response.text();
-  const body = text ? JSON.parse(text) : {};
+  let body = {};
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    body = { message: text.slice(0, 240) || response.statusText || "non-json response" };
+  }
   if (!response.ok) {
     const message = typeof body?.message === "string" ? body.message : response.statusText;
     throw new Error(`Discord API ${response.status}: ${message}`);
@@ -1322,7 +1352,7 @@ async function sendSelfCheckReportToSetup({ config, openclawConfig, report }) {
   return { sent: true, threadId };
 }
 
-export async function runDailySelfCheck({ root, config = {}, openclawConfig = {}, logger, force = false, now = new Date() }) {
+export async function runDailySelfCheck({ root, config = {}, openclawConfig = {}, logger, force = false, now = new Date(), deliverReport = true }) {
   const normalizedConfig = normalizePluginConfig(config);
   if (!normalizedConfig.selfCheck.enabled) return { skipped: true, reason: "self-check disabled" };
   const statePath = resolve(resolvePath(root, normalizedConfig.memoryDir), "self-check/state.json");
@@ -1338,12 +1368,16 @@ export async function runDailySelfCheck({ root, config = {}, openclawConfig = {}
     catchup: await runDiscordCatchup({ root, config: normalizedConfig, openclawConfig, logger, now })
   };
   report.drift = runDriftAudit({ root, config: normalizedConfig, openclawConfig, catchup: report.catchup });
-  try {
-    report.delivery = await sendSelfCheckReportToSetup({ config: normalizedConfig, openclawConfig, report });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger?.warn?.(`clawclave: self-check report delivery failed: ${message}`);
-    report.delivery = { sent: false, error: message };
+  if (deliverReport) {
+    try {
+      report.delivery = await sendSelfCheckReportToSetup({ config: normalizedConfig, openclawConfig, report });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger?.warn?.(`clawclave: self-check report delivery failed: ${message}`);
+      report.delivery = { sent: false, error: message };
+    }
+  } else {
+    report.delivery = { sent: false, reason: "delivery disabled" };
   }
   report.finishedAt = new Date().toISOString();
   writeJson(statePath, {
@@ -1370,11 +1404,11 @@ export function startClawclaveMaintenance({ root, config = {}, openclawConfig = 
     });
   };
   if (normalizedConfig.catchup.enabled) {
-    timers.push(setTimeout(runCatchup, 90 * 1000));
+    timers.push(setTimeout(runCatchup, normalizedConfig.catchup.initialDelayMinutes * 60 * 1000));
     timers.push(setInterval(runCatchup, normalizedConfig.catchup.intervalMinutes * 60 * 1000));
   }
   if (normalizedConfig.selfCheck.enabled) {
-    timers.push(setTimeout(runSelfCheck, 5 * 60 * 1000));
+    timers.push(setTimeout(runSelfCheck, normalizedConfig.selfCheck.initialDelayMinutes * 60 * 1000));
     timers.push(setInterval(runSelfCheck, Math.min(normalizedConfig.selfCheck.intervalHours, 24) * 60 * 60 * 1000));
   }
   return () => {

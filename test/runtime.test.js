@@ -107,12 +107,14 @@ test("normalizePluginConfig uses marketplace-safe defaults", () => {
     openclawTurnJournal: true,
     catchup: {
       enabled: true,
+      initialDelayMinutes: 10,
       lookbackMinutes: 180,
       intervalMinutes: 10,
       maxPagesPerChannel: 4
     },
     selfCheck: {
       enabled: true,
+      initialDelayMinutes: 15,
       intervalHours: 24,
       setupChannelId: "1477547786349187155",
       threadName: "Clawclave daily persistence audit"
@@ -324,6 +326,34 @@ test("raw ingress persists Discord channel history without guild id", () => {
     assert.equal(result.rawJournal.appended, true);
     assert.equal(result.transcript.appended, true);
     assert.equal(result.groupSlug, "ops");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("raw ingress tolerates circular Discord raw data", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const rawData = {
+      id: "circular-1",
+      channel_id: "123",
+      timestamp: "2026-05-20T00:00:00.000Z",
+      content: "ping",
+      author: { id: "u1", username: "tester" }
+    };
+    rawData.timeout = { owner: rawData };
+
+    const result = recordDiscordRawIngress({
+      root,
+      event: { message: { rawData } },
+      accountId: "host"
+    });
+
+    assert.equal(result.rawJournal.appended, true);
+    const raw = readFileSync(result.rawJournal.file, "utf8");
+    assert.match(raw, /"content":"ping"/);
+    assert.match(raw, /"owner":"\[Circular\]"/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -661,6 +691,36 @@ test("runDailySelfCheck creates setup thread and posts daily drift report", asyn
       const state = JSON.parse(readFileSync(resolve(root, "memory/clawclave/self-check/state.json"), "utf8"));
       assert.equal(state.lastReport.delivery.threadId, "thread-1");
       assert.equal(state.lastReport.drift.sources.catchupTargets, 1);
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runDailySelfCheck can run as a dry-run without Discord delivery", async () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    let fetchCalls = 0;
+    await withMockFetch((url) => {
+      fetchCalls += 1;
+      if (url.endsWith("/channels/123/messages?limit=100")) return mockJsonResponse([]);
+      throw new Error(`unexpected URL ${url}`);
+    }, async () => {
+      const report = await runDailySelfCheck({
+        root,
+        config: {
+          hostAccountId: "host",
+          selfCheck: { setupChannelId: "setup", threadName: "Daily Audit" },
+          catchup: { lookbackMinutes: 180, maxPagesPerChannel: 1 }
+        },
+        openclawConfig: openclawConfigForCatchup("123"),
+        force: true,
+        deliverReport: false,
+        now: new Date("2026-05-26T08:00:00.000Z")
+      });
+      assert.equal(fetchCalls, 1);
+      assert.deepEqual(report.delivery, { sent: false, reason: "delivery disabled" });
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
