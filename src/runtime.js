@@ -401,6 +401,84 @@ function appendOpenClawTurnJournal({ root, config, input, phase, event = {}, ctx
   );
 }
 
+function buildSyntheticDiscordOutputInput(input, content, options = {}) {
+  const accountId = firstString(options.accountId, input.accountId, input.agentId);
+  return {
+    version: 1,
+    timestamp: firstString(options.timestamp, input.timestamp) ?? new Date().toISOString(),
+    direction: "outbound",
+    provider: "discord",
+    source: firstString(options.source) ?? "clawclave-onboarding",
+    accountId,
+    agentId: firstString(options.agentId, accountId),
+    sessionKey: firstString(options.sessionKey, input.sessionKey) ?? (accountId && input.channelId ? `agent:${accountId}:discord:channel:${input.channelId}` : undefined),
+    guildId: input.guildId,
+    channelId: input.channelId,
+    threadId: input.threadId,
+    messageId: firstString(options.messageId),
+    authorId: firstString(options.authorId),
+    content: content ?? ""
+  };
+}
+
+function recordOnboardingOutputIntent({ root, config, input, content, state, now }) {
+  const outputInput = buildSyntheticDiscordOutputInput(input, content, {
+    accountId: config.hostAccountId,
+    messageId: `${input.messageId ?? simpleHash(input.content)}:onboarding-visible-prompt`,
+    timestamp: now,
+    source: "clawclave-onboarding-intent"
+  });
+  const turnJournal = appendOpenClawTurnJournal({
+    root,
+    config,
+    input: outputInput,
+    phase: "output_intent",
+    event: { content, triggerMessageId: input.messageId, source: "clawclave-onboarding" },
+    ctx: { messageProvider: "discord", agentId: config.hostAccountId }
+  });
+  state.pendingVisiblePrompt = {
+    content,
+    triggerMessageId: input.messageId,
+    intentMessageId: outputInput.messageId,
+    accountId: config.hostAccountId,
+    sessionKey: outputInput.sessionKey,
+    createdAt: now
+  };
+  return { turnJournal, outputInput };
+}
+
+function recordOnboardingOutputDelivery({ root, config, goals, input, event, state }) {
+  const pending = isObject(state?.pendingVisiblePrompt) ? state.pendingVisiblePrompt : null;
+  if (!pending?.content || input.authorType !== "bot") return { matched: false };
+  if (String(input.content ?? "") !== String(pending.content ?? "")) return { matched: false };
+  const outputInput = buildSyntheticDiscordOutputInput(input, pending.content, {
+    accountId: pending.accountId ?? config.hostAccountId,
+    agentId: pending.accountId ?? config.hostAccountId,
+    sessionKey: pending.sessionKey,
+    messageId: input.messageId,
+    timestamp: input.timestamp,
+    authorId: input.authorId,
+    source: "clawclave-onboarding-delivery"
+  });
+  const transcript = appendNormalizedTranscript({ root, config, goals, input: outputInput });
+  const rawJournal = appendDiscordRawOutboundJournal({ root, config, input: outputInput, event, phase: "sent" });
+  const turnJournal = appendOpenClawTurnJournal({
+    root,
+    config,
+    input: outputInput,
+    phase: "output_result",
+    event,
+    ctx: { messageProvider: "discord", agentId: pending.accountId ?? config.hostAccountId },
+    outcome: { matchedPendingVisiblePrompt: true, triggerMessageId: pending.triggerMessageId }
+  });
+  state.pendingVisiblePrompt = {
+    ...pending,
+    deliveredAt: new Date().toISOString(),
+    deliveredMessageId: input.messageId
+  };
+  return { matched: true, transcript, rawJournal, turnJournal, outputInput };
+}
+
 function loadAgentRoleMap(root, config) {
   const roleMap = readJson(resolvePath(root, config.agentRoleMapFile), { roles: [] });
   return Array.isArray(roleMap.roles) ? roleMap.roles : [];
@@ -766,9 +844,6 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
   const previous = readJson(statePath, null);
   const now = new Date().toISOString();
   const hostAccountId = normalizedConfig.hostAccountId;
-  if (previous && accountId !== hostAccountId) {
-    return { handled: true, mapped: false, created: false, path: statePath, state: previous, input, rawJournal, transcript, hostedTurn };
-  }
   const state = previous ?? {
     version: 1,
     status: "pending_goal",
@@ -781,6 +856,20 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
     requiredFields: ["slug", "name", "oneLineGoal", "northStar", "operatingMetrics", "guardrailMetrics"]
   };
 
+  const outputDelivery = recordOnboardingOutputDelivery({ root, config: normalizedConfig, goals, input, event, state });
+  if (outputDelivery.matched) {
+    state.updatedAt = now;
+    state.lastSeenAt = now;
+    state.lastMessageId = input.messageId;
+    state.lastSeenByAccountId = accountId;
+    writeJson(statePath, state);
+    return { handled: true, mapped: false, created: !previous, path: statePath, state, input, rawJournal, transcript, hostedTurn, outputDelivery };
+  }
+
+  if (previous && accountId !== hostAccountId) {
+    return { handled: true, mapped: false, created: false, path: statePath, state: previous, input, rawJournal, transcript, hostedTurn };
+  }
+
   state.updatedAt = now;
   state.lastSeenAt = now;
   state.lastMessageId = input.messageId;
@@ -788,11 +877,13 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
 
   const shouldPrompt = accountId === hostAccountId && !state.promptedAt && input.authorType !== "bot";
   let visiblePrompt;
+  let outputIntent;
   if (shouldPrompt) {
     state.promptedAt = now;
     state.promptedByAccountId = accountId;
     state.promptedForMessageId = input.messageId;
     visiblePrompt = buildOnboardingVisiblePrompt(input);
+    outputIntent = recordOnboardingOutputIntent({ root, config: normalizedConfig, input, content: visiblePrompt, state, now });
   } else if (accountId === hostAccountId && input.authorType !== "bot" && state.status === "pending_goal" && state.promptedAt) {
     if (isSubstantiveOnboardingText(input.content)) {
       const groupRecord = inferOnboardingGroup(input, state);
@@ -805,11 +896,13 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
       state.goalMessageId = input.messageId;
       state.goalMessagePreview = String(input.content ?? "").slice(0, 500);
       visiblePrompt = buildOnboardingConfiguredPrompt(groupRecord);
+      outputIntent = recordOnboardingOutputIntent({ root, config: normalizedConfig, input, content: visiblePrompt, state, now });
     } else {
       const lastReminderAt = Date.parse(state.lastReminderAt ?? "");
       if (!Number.isFinite(lastReminderAt) || Date.now() - lastReminderAt > 10 * 60 * 1000) {
         state.lastReminderAt = now;
         visiblePrompt = buildOnboardingReminderPrompt();
+        outputIntent = recordOnboardingOutputIntent({ root, config: normalizedConfig, input, content: visiblePrompt, state, now });
       }
     }
   }
@@ -825,7 +918,8 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
     rawJournal,
     transcript,
     hostedTurn,
-    visiblePrompt
+    visiblePrompt,
+    outputIntent
   };
 }
 
@@ -947,6 +1041,7 @@ function collectOnboardingChannelIds(root, config) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
     const state = readJson(resolve(dir, entry.name), {});
+    if (!state.guildId && !state.firstMessageId && state.status !== "configured") continue;
     addDiscordId(ids, state.channelId);
     addDiscordId(ids, state.threadId);
     addDiscordId(ids, entry.name.replace(/\.json$/, ""));
@@ -971,8 +1066,9 @@ function collectMemoryChannelIds(root, config) {
     walkFiles(memoryRoot, (file) => {
       const relative = file.slice(memoryRoot.length + 1);
       for (const pattern of [
-        /(?:^|\/)channels\/(\d+)(?:\/|$)/g,
-        /(?:^|\/)dms\/(\d+)(?:\/|$)/g,
+        /(?:^|\/)discord\/raw\/guilds\/\d+\/channels\/(\d+)(?:\/|$)/g,
+        /(?:^|\/)transcripts\/guilds\/\d+\/channels\/(\d+)(?:\/|$)/g,
+        /(?:^|\/)transcripts\/groups\/[^/]+\/channels\/(\d+)(?:\/|$)/g,
         /(?:^|\/)threads\/(\d+)(?:\/|$)/g
       ]) {
         for (const match of relative.matchAll(pattern)) addDiscordId(ids, match[1]);
