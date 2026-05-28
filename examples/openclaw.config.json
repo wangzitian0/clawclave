@@ -33,9 +33,9 @@
           },
           "selfCheck": {
             "enabled": true,
-            "intervalHours": 168,
+            "intervalHours": 24,
             "setupChannelId": "123456789012345678",
-            "threadName": "Clawclave weekly persistence audit"
+            "threadName": "Clawclave daily persistence audit"
           }
         },
         "hooks": {

@@ -187,8 +187,8 @@
       "help": "Periodically backfills recent Discord messages into raw and normalized journals."
     },
     "selfCheck": {
-      "label": "Weekly self-check",
-      "help": "Runs catchup, audits persistence coverage, and posts the report to a setup thread."
+      "label": "Daily self-check",
+      "help": "Runs catchup, audits persistence and key-path drift, and posts the report to a setup thread."
     }
   }
 }

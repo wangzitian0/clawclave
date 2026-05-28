@@ -32,9 +32,9 @@ Clawclave is configured from the `plugins.entries.clawclave.config` object in
   },
   "selfCheck": {
     "enabled": true,
-    "intervalHours": 168,
+    "intervalHours": 24,
     "setupChannelId": "123456789012345678",
-    "threadName": "Clawclave weekly persistence audit"
+    "threadName": "Clawclave daily persistence audit"
   }
 }
 ```
@@ -130,6 +130,7 @@ and `maxPagesPerChannel` caps Discord API pagination.
 
 `selfCheck`
 
-Weekly long-running maintenance check. It runs catchup first, writes a compact
-state file, then posts the report to `setupChannelId` under `threadName`,
-creating the thread when Discord permissions allow it.
+Daily long-running maintenance check. It runs catchup first, audits drift across
+configuration, group goals, onboarding state, and existing memory paths, writes
+a compact state file, then posts the report to `setupChannelId` under
+`threadName`, creating the thread when Discord permissions allow it.
