@@ -34,7 +34,7 @@ layer for long-lived Discord agent groups:
 - Detects unmapped Discord channels and creates onboarding state.
 - Records normalized inbound and outbound transcript events.
 - Records Discord raw journals and OpenClaw turn journals for evidence.
-- Runs Discord catchup and a weekly self-check report for missed-message repair.
+- Runs Discord catchup and a daily self-check report for missed-message repair and drift audit.
 - Keeps group goals in a portable JSON source of truth.
 - Defines hosted discussion, participation, research, and onboarding contracts.
 - Audits discussion lifecycle state, communication contracts, and deprecated
@@ -142,9 +142,9 @@ Then add it to `openclaw.json`:
           },
           "selfCheck": {
             "enabled": true,
-            "intervalHours": 168,
+            "intervalHours": 24,
             "setupChannelId": "123456789012345678",
-            "threadName": "Clawclave weekly persistence audit"
+            "threadName": "Clawclave daily persistence audit"
           }
         },
         "hooks": {
@@ -285,8 +285,9 @@ Clawclave keeps four evidence layers when the corresponding options are enabled:
 The plugin also runs periodic Discord catchup from recent channel history. This
 cannot observe messages that Discord no longer returns or channels the host
 account cannot read, but it repairs the common restart/provider-offline window.
-The weekly self-check runs catchup first, then posts a compact report to the
-configured setup thread, creating that thread when possible.
+The daily self-check runs catchup first, audits key-path drift, then posts a
+compact report to the configured setup thread, creating that thread when
+possible.
 
 ## Configuration
 

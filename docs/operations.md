@@ -26,21 +26,22 @@ memory, transcripts, credentials, or host-specific configuration to npm.
 
 Clawclave records four evidence layers when enabled:
 
-1. Discord inbound evidence from OpenClaw message hooks and catchup.
-2. OpenClaw accepted input.
-3. OpenClaw output intent before dispatch.
-4. Discord outbound result after send.
+1. `discord_input`: Discord inbound evidence from `message_received` and REST catchup.
+2. `openclaw_input`: OpenClaw accepted input from canonical inbound message hooks.
+3. `openclaw_output`: OpenClaw output intent from `message_sending`.
+4. `discord_output`: Discord outbound result after `message_sent`.
 
 The Discord REST catchup worker repairs the common window where the provider was
 offline or restarting. It can only backfill messages the configured host account
 can still read from Discord history.
 
-## Weekly Self-Check
+## Daily Self-Check
 
-The self-check worker runs catchup first, then posts a compact report to the
-configured setup thread. It creates the thread when Discord permissions allow
-it. The report includes scanned channel count, fetched message count, appended
-record count, duplicate count, and channel errors.
+The self-check worker runs catchup first, audits key-path drift, then posts a
+compact report to the configured setup thread. It creates the thread when
+Discord permissions allow it. The report includes scanned channel count, fetched
+message count, appended record count, duplicate count, channel errors, merged
+catchup target counts, and drift issues.
 
 ## Operational Guardrails
 

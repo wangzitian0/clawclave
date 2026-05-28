@@ -1,5 +1,12 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
+
+const CHECKPOINTS = {
+  discordInput: "discord_input",
+  openclawInput: "openclaw_input",
+  openclawOutput: "openclaw_output",
+  discordOutput: "discord_output"
+};
 
 const DEFAULT_CONFIG = {
   goalsFile: "workspace/groups/company-goals.json",
@@ -26,9 +33,9 @@ const DEFAULT_CONFIG = {
   },
   selfCheck: {
     enabled: true,
-    intervalHours: 168,
+    intervalHours: 24,
     setupChannelId: "1477547786349187155",
-    threadName: "Clawclave weekly persistence audit"
+    threadName: "Clawclave daily persistence audit"
   }
 };
 
@@ -341,6 +348,8 @@ function appendDiscordRawInboundJournal({ root, config, input, event = {}, sourc
     file,
     {
       ...input,
+      checkpoint: CHECKPOINTS.discordInput,
+      checkpointSource: source,
       source,
       raw: readDiscordRawMessageData(event)
     },
@@ -355,6 +364,8 @@ function appendDiscordRawOutboundJournal({ root, config, input, event = {}, phas
     file,
     {
       ...input,
+      checkpoint: CHECKPOINTS.discordOutput,
+      checkpointSource: phase,
       phase,
       raw: isObject(event) ? event : {}
     },
@@ -365,10 +376,17 @@ function appendDiscordRawOutboundJournal({ root, config, input, event = {}, phas
 function appendOpenClawTurnJournal({ root, config, input, phase, event = {}, ctx = {}, outcome }) {
   if (!config.openclawTurnJournal) return { appended: false, reason: "turn journal disabled" };
   const file = openclawTurnFile(root, config, input);
+  const checkpoint = phase === "accepted_input"
+    ? CHECKPOINTS.openclawInput
+    : phase === "output_intent"
+      ? CHECKPOINTS.openclawOutput
+      : CHECKPOINTS.discordOutput;
   return appendJsonlUnique(
     file,
     {
       ...input,
+      checkpoint,
+      checkpointSource: phase,
       phase,
       outcome,
       runId: input.runId,
@@ -908,12 +926,88 @@ function collectDiscordChannelIds(discordConfig = {}, selfCheck = {}) {
   return [...channelIds];
 }
 
-function collectDiscordCatchupTargets(openclawConfig = {}, config = normalizePluginConfig()) {
+function addDiscordId(set, value) {
+  const id = normalizeDiscordId(value, { allowAlias: false });
+  if (/^\d+$/.test(id ?? "")) set.add(id);
+}
+
+function collectGoalChannelIds(root, config) {
+  const ids = new Set();
+  for (const group of loadGoals(root, config).groups) {
+    addDiscordId(ids, group.channelId);
+    addDiscordId(ids, group.threadId);
+  }
+  return [...ids];
+}
+
+function collectOnboardingChannelIds(root, config) {
+  const ids = new Set();
+  const dir = resolvePath(root, config.onboardingDir);
+  if (!dir || !existsSync(dir)) return [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    const state = readJson(resolve(dir, entry.name), {});
+    addDiscordId(ids, state.channelId);
+    addDiscordId(ids, state.threadId);
+    addDiscordId(ids, entry.name.replace(/\.json$/, ""));
+  }
+  return [...ids];
+}
+
+function walkFiles(root, visit) {
+  if (!root || !existsSync(root)) return;
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = resolve(root, entry.name);
+    if (entry.isDirectory()) walkFiles(path, visit);
+    else if (entry.isFile()) visit(path);
+  }
+}
+
+function collectMemoryChannelIds(root, config) {
+  const ids = new Set();
+  const memoryRoot = resolvePath(root, config.memoryDir);
+  const hostedTurnsRoot = resolvePath(root, config.hostedTurnsDir);
+  if (memoryRoot && existsSync(memoryRoot)) {
+    walkFiles(memoryRoot, (file) => {
+      const relative = file.slice(memoryRoot.length + 1);
+      for (const pattern of [
+        /(?:^|\/)channels\/(\d+)(?:\/|$)/g,
+        /(?:^|\/)dms\/(\d+)(?:\/|$)/g,
+        /(?:^|\/)threads\/(\d+)(?:\/|$)/g
+      ]) {
+        for (const match of relative.matchAll(pattern)) addDiscordId(ids, match[1]);
+      }
+    });
+  }
+  if (hostedTurnsRoot && existsSync(hostedTurnsRoot)) {
+    walkFiles(hostedTurnsRoot, (file) => {
+      if (!file.endsWith(".json")) return;
+      const state = readJson(file, {});
+      addDiscordId(ids, state.channelId);
+      addDiscordId(ids, state.threadId);
+    });
+  }
+  return [...ids];
+}
+
+function collectDiscordCatchupChannelIds(root, openclawConfig = {}, config = normalizePluginConfig(), options = {}) {
+  const discord = openclawConfig?.channels?.discord ?? {};
+  const ids = new Set();
+  for (const id of collectDiscordChannelIds(discord, config.selfCheck)) addDiscordId(ids, id);
+  for (const id of collectGoalChannelIds(root, config)) addDiscordId(ids, id);
+  for (const id of collectOnboardingChannelIds(root, config)) addDiscordId(ids, id);
+  if (options.includeMemory) {
+    for (const id of collectMemoryChannelIds(root, config)) addDiscordId(ids, id);
+  }
+  return [...ids].sort();
+}
+
+function collectDiscordCatchupTargets(root, openclawConfig = {}, config = normalizePluginConfig()) {
   const discord = openclawConfig?.channels?.discord ?? {};
   const accounts = isObject(discord.accounts) ? discord.accounts : {};
   const account = accounts[config.hostAccountId] ?? accounts.default;
   const token = firstString(account?.token);
-  const channelIds = collectDiscordChannelIds(discord, config.selfCheck);
+  const channelIds = collectDiscordCatchupChannelIds(root, openclawConfig, config);
   if (!token || channelIds.length === 0) return [];
   return [{ accountId: config.hostAccountId, token, channelIds }];
 }
@@ -942,7 +1036,7 @@ export async function runDiscordCatchup({ root, config = {}, openclawConfig = {}
   const normalizedConfig = normalizePluginConfig(config);
   if (!normalizedConfig.catchup.enabled) return { skipped: true, reason: "catchup disabled" };
   const sinceMs = now.getTime() - normalizedConfig.catchup.lookbackMinutes * 60 * 1000;
-  const targets = collectDiscordCatchupTargets(openclawConfig, normalizedConfig);
+  const targets = collectDiscordCatchupTargets(root, openclawConfig, normalizedConfig);
   const summary = {
     startedAt: now.toISOString(),
     lookbackMinutes: normalizedConfig.catchup.lookbackMinutes,
@@ -994,12 +1088,90 @@ function truncateDiscordContent(value, maxLength = 1900) {
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 20)}\n... [truncated]`;
 }
 
+function diffSets(left, right) {
+  const rightSet = new Set(right);
+  return left.filter((value) => !rightSet.has(value));
+}
+
+export function runDriftAudit({ root, config = {}, openclawConfig = {}, catchup } = {}) {
+  const normalizedConfig = normalizePluginConfig(config);
+  const discord = openclawConfig?.channels?.discord ?? {};
+  const configuredChannels = collectDiscordChannelIds(discord, normalizedConfig.selfCheck).sort();
+  const goalChannels = collectGoalChannelIds(root, normalizedConfig).sort();
+  const onboardingChannels = collectOnboardingChannelIds(root, normalizedConfig).sort();
+  const memoryChannels = collectMemoryChannelIds(root, normalizedConfig).sort();
+  const catchupTargets = collectDiscordCatchupChannelIds(root, openclawConfig, normalizedConfig, { includeMemory: true });
+  const issues = [];
+  const requiredFlags = [
+    ["transcriptWriter", normalizedConfig.transcriptWriter],
+    ["discordRawJournal", normalizedConfig.discordRawJournal],
+    ["openclawTurnJournal", normalizedConfig.openclawTurnJournal],
+    ["catchup.enabled", normalizedConfig.catchup.enabled],
+    ["selfCheck.enabled", normalizedConfig.selfCheck.enabled]
+  ];
+  for (const [name, enabled] of requiredFlags) {
+    if (!enabled) issues.push({ severity: "error", code: "disabled_persistence_flag", message: `${name} is disabled` });
+  }
+  for (const [name, path] of [
+    ["goalsFile", resolvePath(root, normalizedConfig.goalsFile)],
+    ["agentRoleMapFile", resolvePath(root, normalizedConfig.agentRoleMapFile)]
+  ]) {
+    if (!path || !existsSync(path)) issues.push({ severity: "warning", code: "missing_key_path", message: `${name} is missing`, path });
+  }
+  if (catchupTargets.length === 0) {
+    issues.push({ severity: "error", code: "no_catchup_targets", message: "no Discord channels are available for catchup" });
+  }
+  const discoveredOutsideConfig = [...new Set([
+    ...diffSets(goalChannels, configuredChannels),
+    ...diffSets(onboardingChannels, configuredChannels),
+    ...diffSets(memoryChannels, configuredChannels)
+  ])].sort();
+  if (discoveredOutsideConfig.length > 0) {
+    issues.push({
+      severity: "warning",
+      code: "channels_discovered_outside_config",
+      message: "channels exist in group/onboarding/memory state but are absent from explicit Discord config",
+      channels: discoveredOutsideConfig
+    });
+  }
+  const catchupErrors = Array.isArray(catchup?.errors) ? catchup.errors : [];
+  if (catchupErrors.length > 0) {
+    issues.push({
+      severity: "warning",
+      code: "catchup_errors",
+      message: "Discord catchup reported channel errors",
+      count: catchupErrors.length
+    });
+  }
+  return {
+    generatedAt: new Date().toISOString(),
+    status: issues.some((issue) => issue.severity === "error") ? "ERROR" : issues.length > 0 ? "WARN" : "OK",
+    sources: {
+      configuredChannels: configuredChannels.length,
+      goalChannels: goalChannels.length,
+      onboardingChannels: onboardingChannels.length,
+      memoryChannels: memoryChannels.length,
+      catchupTargets: catchupTargets.length
+    },
+    discoveredOutsideConfig,
+    checkpointContract: [
+      { checkpoint: CHECKPOINTS.discordInput, source: "message_received + Discord REST catchup" },
+      { checkpoint: CHECKPOINTS.openclawInput, source: "message_received canonical inbound" },
+      { checkpoint: CHECKPOINTS.openclawOutput, source: "message_sending" },
+      { checkpoint: CHECKPOINTS.discordOutput, source: "message_sent" }
+    ],
+    issues
+  };
+}
+
 export function formatSelfCheckReport(report = {}) {
   const errors = Array.isArray(report.catchup?.errors) ? report.catchup.errors : [];
+  const drift = report.drift;
+  const driftIssues = Array.isArray(drift?.issues) ? drift.issues : [];
   return [
-    "Clawclave weekly persistence audit",
+    "Clawclave daily persistence audit",
     "",
-    `Status: ${errors.length === 0 ? "OK" : "NEEDS_ATTENTION"}`,
+    `Status: ${errors.length === 0 && (!drift || drift.status === "OK") ? "OK" : "NEEDS_ATTENTION"}`,
     `Started: ${report.startedAt ?? "unknown"}`,
     `Catchup lookback: ${report.catchup?.lookbackMinutes ?? "unknown"} minutes`,
     `Channels scanned: ${report.catchup?.channels ?? 0}`,
@@ -1009,7 +1181,11 @@ export function formatSelfCheckReport(report = {}) {
     `Duplicates skipped: ${report.catchup?.duplicates ?? 0}`,
     errors.length > 0 ? `Errors: ${errors.slice(0, 5).map((error) => `${error.channelId}: ${error.message}`).join("; ")}` : "Errors: none",
     "",
-    "Self-repair: Discord catchup was executed before this report, so recent missed provider-window messages were backfilled when reachable from Discord history."
+    `Drift status: ${drift?.status ?? "unknown"}`,
+    drift?.sources ? `Drift sources: config=${drift.sources.configuredChannels} goals=${drift.sources.goalChannels} onboarding=${drift.sources.onboardingChannels} memory=${drift.sources.memoryChannels} targets=${drift.sources.catchupTargets}` : "Drift sources: unknown",
+    driftIssues.length > 0 ? `Drift issues: ${driftIssues.slice(0, 5).map((issue) => `${issue.severity}/${issue.code}: ${issue.message}`).join("; ")}` : "Drift issues: none",
+    "",
+    "Self-repair: Discord catchup was executed before this report, and drift targets are merged from config, group goals, onboarding state, and existing memory paths."
   ].join("\n");
 }
 
@@ -1050,7 +1226,7 @@ async function sendSelfCheckReportToSetup({ config, openclawConfig, report }) {
   return { sent: true, threadId };
 }
 
-export async function runWeeklySelfCheck({ root, config = {}, openclawConfig = {}, logger, force = false, now = new Date() }) {
+export async function runDailySelfCheck({ root, config = {}, openclawConfig = {}, logger, force = false, now = new Date() }) {
   const normalizedConfig = normalizePluginConfig(config);
   if (!normalizedConfig.selfCheck.enabled) return { skipped: true, reason: "self-check disabled" };
   const statePath = resolve(resolvePath(root, normalizedConfig.memoryDir), "self-check/state.json");
@@ -1065,6 +1241,7 @@ export async function runWeeklySelfCheck({ root, config = {}, openclawConfig = {
     startedAt: now.toISOString(),
     catchup: await runDiscordCatchup({ root, config: normalizedConfig, openclawConfig, logger, now })
   };
+  report.drift = runDriftAudit({ root, config: normalizedConfig, openclawConfig, catchup: report.catchup });
   try {
     report.delivery = await sendSelfCheckReportToSetup({ config: normalizedConfig, openclawConfig, report });
   } catch (error) {
@@ -1081,6 +1258,8 @@ export async function runWeeklySelfCheck({ root, config = {}, openclawConfig = {
   return report;
 }
 
+export const runWeeklySelfCheck = runDailySelfCheck;
+
 export function startClawclaveMaintenance({ root, config = {}, openclawConfig = {}, logger }) {
   const normalizedConfig = normalizePluginConfig(config);
   const timers = [];
@@ -1090,7 +1269,7 @@ export function startClawclaveMaintenance({ root, config = {}, openclawConfig = 
     });
   };
   const runSelfCheck = () => {
-    runWeeklySelfCheck({ root, config: normalizedConfig, openclawConfig, logger }).catch((error) => {
+    runDailySelfCheck({ root, config: normalizedConfig, openclawConfig, logger }).catch((error) => {
       logger?.warn?.(`clawclave: self-check worker failed: ${error instanceof Error ? error.message : String(error)}`);
     });
   };

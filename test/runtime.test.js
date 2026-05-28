@@ -13,8 +13,9 @@ import {
   recordOpenClawOutboundResult,
   recordOpenClawOutputIntent,
   resolveDiscordIds,
+  runDailySelfCheck,
   runDiscordCatchup,
-  runWeeklySelfCheck
+  runDriftAudit
 } from "../src/runtime.js";
 
 function tempRoot() {
@@ -112,9 +113,9 @@ test("normalizePluginConfig uses marketplace-safe defaults", () => {
     },
     selfCheck: {
       enabled: true,
-      intervalHours: 168,
+      intervalHours: 24,
       setupChannelId: "1477547786349187155",
-      threadName: "Clawclave weekly persistence audit"
+      threadName: "Clawclave daily persistence audit"
     }
   });
 });
@@ -238,6 +239,7 @@ test("raw ingress creates onboarding state and prompts only from host account", 
     assert.equal(nonHost.visiblePrompt, undefined);
     assert.equal(nonHost.rawJournal.appended, true);
     assert.equal(nonHost.transcript.appended, true);
+    assert.match(readFileSync(nonHost.rawJournal.file, "utf8"), /"checkpoint":"discord_input"/);
     const duplicate = recordDiscordRawIngress({ root, event, accountId: "other" });
     assert.equal(duplicate.rawJournal.duplicate, true);
     assert.equal(duplicate.transcript.duplicate, true);
@@ -363,11 +365,14 @@ test("OpenClaw output intent and outbound result write separate journals", () =>
     const intent = recordOpenClawOutputIntent({ root, event, ctx });
     assert.equal(intent.recorded, true);
     assert.match(readFileSync(intent.file, "utf8"), /"phase":"output_intent"/);
+    assert.match(readFileSync(intent.file, "utf8"), /"checkpoint":"openclaw_output"/);
     const result = recordOpenClawOutboundResult({ root, event, ctx });
     assert.equal(result.recorded, true);
     assert.equal(result.rawJournal.appended, true);
     assert.match(readFileSync(result.rawJournal.file, "utf8"), /"phase":"sent"/);
+    assert.match(readFileSync(result.rawJournal.file, "utf8"), /"checkpoint":"discord_output"/);
     assert.match(readFileSync(result.turnJournal.file, "utf8"), /"phase":"output_result"/);
+    assert.match(readFileSync(result.turnJournal.file, "utf8"), /"checkpoint":"discord_output"/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -513,6 +518,42 @@ test("runDiscordCatchup reports channel errors without aborting all channels", a
   }
 });
 
+test("runDiscordCatchup scans drift-discovered channels from goals and onboarding", async () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    mkdirSync(resolve(root, "workspace/groups/onboarding/active"), { recursive: true });
+    writeFileSync(
+      resolve(root, "workspace/groups/onboarding/active/456.json"),
+      `${JSON.stringify({ version: 1, channelId: "456", status: "pending_goal" }, null, 2)}\n`
+    );
+    const fetchedChannels = [];
+    await withMockFetch((url) => {
+      const match = url.match(/\/channels\/(\d+)\/messages\?/);
+      if (!match) throw new Error(`unexpected URL ${url}`);
+      fetchedChannels.push(match[1]);
+      return mockJsonResponse([]);
+    }, async () => {
+      const summary = await runDiscordCatchup({
+        root,
+        openclawConfig: {
+          channels: { discord: { accounts: { host: { token: "test-token" } } } }
+        },
+        config: {
+          hostAccountId: "host",
+          selfCheck: { setupChannelId: "789" },
+          catchup: { lookbackMinutes: 180, maxPagesPerChannel: 1 }
+        },
+        now: new Date("2026-05-26T08:00:00.000Z")
+      });
+      assert.deepEqual(fetchedChannels.sort(), ["123", "456", "789"]);
+      assert.equal(summary.channels, 3);
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("runDiscordCatchup can be disabled", async () => {
   const root = tempRoot();
   try {
@@ -528,7 +569,7 @@ test("runDiscordCatchup can be disabled", async () => {
   }
 });
 
-test("runWeeklySelfCheck skips when the previous report is still fresh", async () => {
+test("runDailySelfCheck skips when the previous report is still fresh", async () => {
   const root = tempRoot();
   try {
     mkdirSync(resolve(root, "memory/clawclave/self-check"), { recursive: true });
@@ -536,21 +577,21 @@ test("runWeeklySelfCheck skips when the previous report is still fresh", async (
       resolve(root, "memory/clawclave/self-check/state.json"),
       `${JSON.stringify({ version: 1, lastRunAt: "2026-05-26T07:00:00.000Z" }, null, 2)}\n`
     );
-    const result = await runWeeklySelfCheck({
+    const result = await runDailySelfCheck({
       root,
-      config: { selfCheck: { intervalHours: 168 } },
+      config: { selfCheck: { intervalHours: 24 } },
       openclawConfig: openclawConfigForCatchup("123"),
       now: new Date("2026-05-26T08:00:00.000Z")
     });
     assert.equal(result.skipped, true);
     assert.equal(result.reason, "not due");
-    assert.equal(result.nextRunAt, "2026-06-02T07:00:00.000Z");
+    assert.equal(result.nextRunAt, "2026-05-27T07:00:00.000Z");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("runWeeklySelfCheck creates setup thread and posts report", async () => {
+test("runDailySelfCheck creates setup thread and posts daily drift report", async () => {
   const root = tempRoot();
   try {
     writeGoals(root);
@@ -574,7 +615,7 @@ test("runWeeklySelfCheck creates setup thread and posts report", async () => {
       if (url.endsWith("/channels/setup/threads")) {
         assert.equal(options.method, "POST");
         const body = JSON.parse(options.body);
-        assert.equal(body.name, "Weekly Audit");
+        assert.equal(body.name, "Daily Audit");
         return mockJsonResponse({ id: "thread-1" });
       }
       if (url.endsWith("/channels/thread-1/messages")) {
@@ -584,11 +625,11 @@ test("runWeeklySelfCheck creates setup thread and posts report", async () => {
       }
       throw new Error(`unexpected URL ${url}`);
     }, async () => {
-      const report = await runWeeklySelfCheck({
+      const report = await runDailySelfCheck({
         root,
         config: {
           hostAccountId: "host",
-          selfCheck: { setupChannelId: "setup", threadName: "Weekly Audit" },
+          selfCheck: { setupChannelId: "setup", threadName: "Daily Audit" },
           catchup: { lookbackMinutes: 180, maxPagesPerChannel: 1 }
         },
         openclawConfig: openclawConfigForCatchup("123"),
@@ -596,12 +637,44 @@ test("runWeeklySelfCheck creates setup thread and posts report", async () => {
         now: new Date("2026-05-26T08:00:00.000Z")
       });
       assert.deepEqual(report.delivery, { sent: true, threadId: "thread-1" });
+      assert.equal(report.drift.status, "WARN");
       assert.equal(posted.length, 1);
-      assert.match(posted[0].content, /Clawclave weekly persistence audit/);
-      assert.match(posted[0].content, /Status: OK/);
+      assert.match(posted[0].content, /Clawclave daily persistence audit/);
+      assert.match(posted[0].content, /Drift status: WARN/);
       const state = JSON.parse(readFileSync(resolve(root, "memory/clawclave/self-check/state.json"), "utf8"));
       assert.equal(state.lastReport.delivery.threadId, "thread-1");
+      assert.equal(state.lastReport.drift.sources.catchupTargets, 1);
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runDriftAudit reports key-path and catchup target drift without model calls", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    mkdirSync(resolve(root, "workspace/groups/onboarding/active"), { recursive: true });
+    writeFileSync(
+      resolve(root, "workspace/groups/onboarding/active/456.json"),
+      `${JSON.stringify({ channelId: "456", status: "pending_goal" }, null, 2)}\n`
+    );
+    const report = runDriftAudit({
+      root,
+      config: { selfCheck: { setupChannelId: "789" } },
+      openclawConfig: { channels: { discord: { accounts: { host: { token: "test-token" } } } } }
+    });
+    assert.equal(report.status, "WARN");
+    assert.equal(report.sources.goalChannels, 1);
+    assert.equal(report.sources.onboardingChannels, 1);
+    assert.equal(report.sources.catchupTargets, 3);
+    assert.ok(report.issues.some((issue) => issue.code === "channels_discovered_outside_config"));
+    assert.deepEqual(report.checkpointContract.map((item) => item.checkpoint), [
+      "discord_input",
+      "openclaw_input",
+      "openclaw_output",
+      "discord_output"
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
