@@ -847,7 +847,7 @@ function buildOnboardingReminderPrompt() {
   return "这个群还在等待目标确认。请发一句话目标、North Star、两个运营指标和两个护栏指标；如果让我定，可以直接说主题和“其他你定”。";
 }
 
-export function recordDiscordRawIngress({ root, event = {}, accountId, config = {} }) {
+export function recordDiscordRawIngress({ root, event = {}, accountId, config = {}, orchestrate = true }) {
   const normalizedConfig = normalizePluginConfig(config);
   const input = buildRawIngressInput({ event, accountId });
   if (!input.channelId || !input.messageId) {
@@ -858,11 +858,23 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
   const group = resolveGroup(goals, input);
   const rawJournal = appendDiscordRawInboundJournal({ root, config: normalizedConfig, input, event, source: "discord-raw-ingress" });
   const transcript = appendNormalizedTranscript({ root, config: normalizedConfig, goals, input });
+  if (!orchestrate) {
+    return {
+      handled: true,
+      reason: "persistence only",
+      orchestrated: false,
+      mapped: Boolean(group),
+      groupSlug: group?.slug,
+      input,
+      rawJournal,
+      transcript
+    };
+  }
   const hostedTurn = updateHostedTurnFromInbound({ root, config: normalizedConfig, input });
   if (!normalizedConfig.onboarding) {
-    return { handled: true, reason: "onboarding disabled", mapped: Boolean(group), groupSlug: group?.slug, input, rawJournal, transcript, hostedTurn };
+    return { handled: true, orchestrated: true, reason: "onboarding disabled", mapped: Boolean(group), groupSlug: group?.slug, input, rawJournal, transcript, hostedTurn };
   }
-  if (group) return { handled: true, mapped: true, groupSlug: group.slug, input, rawJournal, transcript, hostedTurn };
+  if (group) return { handled: true, orchestrated: true, mapped: true, groupSlug: group.slug, input, rawJournal, transcript, hostedTurn };
 
   const onboardingDir = resolvePath(root, normalizedConfig.onboardingDir);
   const statePath = resolve(onboardingDir, `${input.channelId}.json`);
@@ -888,11 +900,11 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
     state.lastMessageId = input.messageId;
     state.lastSeenByAccountId = accountId;
     writeJson(statePath, state);
-    return { handled: true, mapped: false, created: !previous, path: statePath, state, input, rawJournal, transcript, hostedTurn, outputDelivery };
+    return { handled: true, orchestrated: true, mapped: false, created: !previous, path: statePath, state, input, rawJournal, transcript, hostedTurn, outputDelivery };
   }
 
   if (previous && accountId !== hostAccountId) {
-    return { handled: true, mapped: false, created: false, path: statePath, state: previous, input, rawJournal, transcript, hostedTurn };
+    return { handled: true, orchestrated: true, mapped: false, created: false, path: statePath, state: previous, input, rawJournal, transcript, hostedTurn };
   }
 
   state.updatedAt = now;
@@ -935,6 +947,7 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
 
   return {
     handled: true,
+    orchestrated: true,
     mapped: false,
     created: !previous,
     path: statePath,
@@ -1190,7 +1203,8 @@ export async function runDiscordCatchup({ root, config = {}, openclawConfig = {}
             root,
             event: { ...message, channel_id: message.channel_id ?? channelId },
             accountId: target.accountId,
-            config: normalizedConfig
+            config: normalizedConfig,
+            orchestrate: false
           });
           if (result.rawJournal?.appended) summary.rawAppended += 1;
           if (result.transcript?.appended) summary.transcriptAppended += 1;

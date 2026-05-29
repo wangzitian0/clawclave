@@ -501,6 +501,45 @@ test("runDiscordCatchup backfills recent Discord history and skips old messages"
   }
 });
 
+test("runDiscordCatchup is persistence-only and does not open onboarding state", async () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    await withMockFetch((url) => {
+      if (url.includes("/channels/999/messages?")) {
+        return mockJsonResponse([
+          {
+            id: "unmapped-1",
+            channel_id: "999",
+            timestamp: "2026-05-26T07:59:00.000Z",
+            content: "new channel topic",
+            author: { id: "u1", username: "one" }
+          }
+        ]);
+      }
+      throw new Error(`unexpected URL ${url}`);
+    }, async () => {
+      const summary = await runDiscordCatchup({
+        root,
+        openclawConfig: openclawConfigForCatchup("999"),
+        config: {
+          hostAccountId: "host",
+          selfCheck: { setupChannelId: "123" },
+          catchup: { lookbackMinutes: 180, maxPagesPerChannel: 1 }
+        },
+        now: new Date("2026-05-26T08:00:00.000Z")
+      });
+      assert.equal(summary.fetched, 1);
+      assert.equal(summary.rawAppended, 1);
+      assert.equal(summary.transcriptAppended, 1);
+      assert.equal(existsSync(resolve(root, "workspace/groups/onboarding/active/999.json")), false);
+      assert.equal(existsSync(resolve(root, "workspace/groups/discussions/active/999.json")), false);
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("runDiscordCatchup reports channel errors without aborting all channels", async () => {
   const root = tempRoot();
   try {
