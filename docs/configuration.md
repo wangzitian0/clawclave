@@ -126,7 +126,9 @@ Maximum recent transcript events to include in prompt context. Range: 0 to 50.
 Periodic Discord REST backfill for recent channel history. It repairs messages
 missed during process restart or provider offline windows. `lookbackMinutes`
 controls how far back each scan goes, `intervalMinutes` controls scan cadence,
-and `maxPagesPerChannel` caps Discord API pagination.
+and `maxPagesPerChannel` caps Discord API pagination. Catchup is
+persistence-only; it writes raw/normalized evidence and does not open
+onboarding prompts, hosted-turn state, reactions, or outbound messages.
 
 `selfCheck`
 

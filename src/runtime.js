@@ -1,6 +1,8 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 
+import { buildGroupContext, buildSharedGroupContext } from "./group-workspace.js";
+
 const CHECKPOINTS = {
   discordInput: "discord_input",
   openclawInput: "openclaw_input",
@@ -62,6 +64,37 @@ function resolvePath(root, value) {
   const path = firstString(value);
   if (!path) return undefined;
   return isAbsolute(path) ? path : resolve(root, path);
+}
+
+function isDiscordGuildChannel(ids = {}) {
+  return Boolean(firstString(ids.guildId) && firstString(ids.channelId));
+}
+
+function runtimeAccountId(input = {}) {
+  return firstString(input.accountId, input.agentId);
+}
+
+function shouldSkipSharedInbound({ config, input, direction }) {
+  if (direction !== "inbound" || !isDiscordGuildChannel(input)) return false;
+  const accountId = runtimeAccountId(input);
+  if (!accountId) return false;
+  return accountId !== config.hostAccountId;
+}
+
+function skippedSharedInboundResult({ config, input, reason = "shared Discord group persistence is owned by host account" }) {
+  return {
+    appended: false,
+    duplicate: false,
+    skipped: true,
+    reason,
+    sharedOwner: config.hostAccountId,
+    accountId: runtimeAccountId(input),
+    channelId: input.channelId,
+    groupSlug: undefined,
+    hostedTurn: { updated: false, opened: false, reason },
+    rawJournal: { appended: false, reason },
+    turnJournal: { appended: false, reason }
+  };
 }
 
 function readJson(path, fallback) {
@@ -590,6 +623,16 @@ function updateHostedTurnFromOutbound({ root, config, input }) {
     version: 1,
     id: `hosted-${input.threadId || input.channelId}-${input.messageId || now.getTime()}`,
     status: "open",
+    host: config.hostAccountId,
+    participants: expectedAgents.map((agent) => ({
+      accountId: agent.accountId,
+      displayName: agent.displayName,
+      botUserId: agent.botUserId,
+      status: "pending"
+    })),
+    deadlineAt: new Date(now.getTime() + maxWaitMs).toISOString(),
+    summary: "",
+    // Compatibility fields for existing audits and older active-state readers.
     mode: expectedAgents.length > 1 ? "hosted-mention" : "single-owner",
     collaboration: expectedAgents.length > 1 ? "parallel" : "single-owner",
     channelId: input.channelId,
@@ -602,13 +645,7 @@ function updateHostedTurnFromOutbound({ root, config, input }) {
     openedAt: now.toISOString(),
     lastActivityAt: now.toISOString(),
     summaryEligibleAt: new Date(now.getTime() + minWaitMs).toISOString(),
-    deadlineAt: new Date(now.getTime() + maxWaitMs).toISOString(),
     summaryStarted: false,
-    policy: {
-      preferSilenceOverNoise: true,
-      expectedRepliesPerAgent: 1,
-      summary: "host decides after all expected replies, expected-1 after min wait, or max wait"
-    },
     promptPreview: content.slice(0, 500)
   };
   const path = activeHostedTurnPath(root, config, input);
@@ -663,6 +700,16 @@ function updateHostedTurnFromInbound({ root, config, input }) {
   const now = new Date().toISOString();
   state.receivedAgents = [...(Array.isArray(state.receivedAgents) ? state.receivedAgents : []), agent.accountId];
   state.receivedMessageIds = [...(Array.isArray(state.receivedMessageIds) ? state.receivedMessageIds : []), input.messageId].filter(Boolean);
+  state.participants = (Array.isArray(state.participants) ? state.participants : expectedAgents).map((entry) => {
+    const accountId = firstString(entry.accountId);
+    if (accountId !== agent.accountId) return entry;
+    return {
+      ...entry,
+      status: "replied",
+      messageId: input.messageId,
+      receivedAt: now
+    };
+  });
   state.lastActivityAt = now;
   state.replies = [
     ...(Array.isArray(state.replies) ? state.replies : []),
@@ -730,6 +777,7 @@ export function buildMessageInput({ event = {}, ctx = {}, direction = "inbound" 
 
 export function ensureOnboardingState({ root, config, ids, event = {}, group }) {
   if (!config.onboarding || group || !ids.channelId) return { created: false, reason: "not needed" };
+  if (!isDiscordGuildChannel(ids)) return { created: false, reason: "not a Discord guild channel" };
   const dir = resolvePath(root, config.onboardingDir);
   const path = resolve(dir, `${ids.channelId}.json`);
   if (existsSync(path)) return { created: false, path, reason: "already exists" };
@@ -847,22 +895,55 @@ function buildOnboardingReminderPrompt() {
   return "这个群还在等待目标确认。请发一句话目标、North Star、两个运营指标和两个护栏指标；如果让我定，可以直接说主题和“其他你定”。";
 }
 
-export function recordDiscordRawIngress({ root, event = {}, accountId, config = {} }) {
+export function recordDiscordRawIngress({ root, event = {}, accountId, config = {}, orchestrate = true }) {
   const normalizedConfig = normalizePluginConfig(config);
   const input = buildRawIngressInput({ event, accountId });
   if (!input.channelId || !input.messageId) {
     return { handled: false, reason: "not a Discord channel message", input };
+  }
+  if (shouldSkipSharedInbound({ config: normalizedConfig, input, direction: "inbound" })) {
+    const skipped = skippedSharedInboundResult({ config: normalizedConfig, input });
+    return {
+      handled: true,
+      orchestrated: false,
+      mapped: false,
+      input,
+      ...skipped
+    };
   }
 
   const goals = loadGoals(root, normalizedConfig);
   const group = resolveGroup(goals, input);
   const rawJournal = appendDiscordRawInboundJournal({ root, config: normalizedConfig, input, event, source: "discord-raw-ingress" });
   const transcript = appendNormalizedTranscript({ root, config: normalizedConfig, goals, input });
+  if (!orchestrate) {
+    return {
+      handled: true,
+      reason: "persistence only",
+      orchestrated: false,
+      mapped: Boolean(group),
+      groupSlug: group?.slug,
+      input,
+      rawJournal,
+      transcript
+    };
+  }
+  if (!group && !isDiscordGuildChannel(input)) {
+    return {
+      handled: true,
+      reason: "direct message persistence only",
+      orchestrated: false,
+      mapped: false,
+      input,
+      rawJournal,
+      transcript
+    };
+  }
   const hostedTurn = updateHostedTurnFromInbound({ root, config: normalizedConfig, input });
   if (!normalizedConfig.onboarding) {
-    return { handled: true, reason: "onboarding disabled", mapped: Boolean(group), groupSlug: group?.slug, input, rawJournal, transcript, hostedTurn };
+    return { handled: true, orchestrated: true, reason: "onboarding disabled", mapped: Boolean(group), groupSlug: group?.slug, input, rawJournal, transcript, hostedTurn };
   }
-  if (group) return { handled: true, mapped: true, groupSlug: group.slug, input, rawJournal, transcript, hostedTurn };
+  if (group) return { handled: true, orchestrated: true, mapped: true, groupSlug: group.slug, input, rawJournal, transcript, hostedTurn };
 
   const onboardingDir = resolvePath(root, normalizedConfig.onboardingDir);
   const statePath = resolve(onboardingDir, `${input.channelId}.json`);
@@ -888,11 +969,11 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
     state.lastMessageId = input.messageId;
     state.lastSeenByAccountId = accountId;
     writeJson(statePath, state);
-    return { handled: true, mapped: false, created: !previous, path: statePath, state, input, rawJournal, transcript, hostedTurn, outputDelivery };
+    return { handled: true, orchestrated: true, mapped: false, created: !previous, path: statePath, state, input, rawJournal, transcript, hostedTurn, outputDelivery };
   }
 
   if (previous && accountId !== hostAccountId) {
-    return { handled: true, mapped: false, created: false, path: statePath, state: previous, input, rawJournal, transcript, hostedTurn };
+    return { handled: true, orchestrated: true, mapped: false, created: false, path: statePath, state: previous, input, rawJournal, transcript, hostedTurn };
   }
 
   state.updatedAt = now;
@@ -935,6 +1016,7 @@ export function recordDiscordRawIngress({ root, event = {}, accountId, config = 
 
   return {
     handled: true,
+    orchestrated: true,
     mapped: false,
     created: !previous,
     path: statePath,
@@ -955,15 +1037,21 @@ export function appendHookTranscriptEvent({ root, event = {}, ctx = {}, config =
   const goals = loadGoals(root, normalizedConfig);
   const input = buildMessageInput({ event, ctx, direction });
   const group = resolveGroup(goals, input);
-  ensureOnboardingState({ root, config: normalizedConfig, ids: input, event, group });
+  if (shouldSkipSharedInbound({ config: normalizedConfig, input, direction })) {
+    return skippedSharedInboundResult({ config: normalizedConfig, input });
+  }
+  const isGroupConversation = Boolean(group) || isDiscordGuildChannel(input);
+  if (isGroupConversation) ensureOnboardingState({ root, config: normalizedConfig, ids: input, event, group });
 
   const rawJournal = direction === "inbound"
     ? appendDiscordRawInboundJournal({ root, config: normalizedConfig, input, event, source: "message_received" })
     : { appended: false, reason: "not inbound" };
   const transcript = appendNormalizedTranscript({ root, config: normalizedConfig, goals, input });
-  const hostedTurn = direction === "outbound"
-    ? updateHostedTurnFromOutbound({ root, config: normalizedConfig, input })
-    : updateHostedTurnFromInbound({ root, config: normalizedConfig, input });
+  const hostedTurn = isGroupConversation
+    ? direction === "outbound"
+      ? updateHostedTurnFromOutbound({ root, config: normalizedConfig, input })
+      : updateHostedTurnFromInbound({ root, config: normalizedConfig, input })
+    : { updated: false, opened: false, reason: "not a Discord guild channel" };
   const phase = direction === "outbound" ? "output_result" : "accepted_input";
   const turnJournal = appendOpenClawTurnJournal({ root, config: normalizedConfig, input, phase, event, ctx });
   return {
@@ -1190,7 +1278,8 @@ export async function runDiscordCatchup({ root, config = {}, openclawConfig = {}
             root,
             event: { ...message, channel_id: message.channel_id ?? channelId },
             accountId: target.accountId,
-            config: normalizedConfig
+            config: normalizedConfig,
+            orchestrate: false
           });
           if (result.rawJournal?.appended) summary.rawAppended += 1;
           if (result.transcript?.appended) summary.transcriptAppended += 1;
@@ -1420,7 +1509,7 @@ function formatList(values) {
   return Array.isArray(values) && values.length > 0 ? values.map((value) => `- ${value}`).join("\n") : "- Not set";
 }
 
-function buildMappedContext({ group, ids, tailEvents }) {
+function buildGroupGoalSummary({ group, ids }) {
   return [
     `<clawclave_group_context slug="${group.slug ?? ""}" channel_id="${ids.channelId ?? ""}">`,
     `Name: ${group.name ?? group.slug ?? "Unnamed group"}`,
@@ -1430,10 +1519,34 @@ function buildMappedContext({ group, ids, tailEvents }) {
     formatList(group.operatingMetrics),
     "Guardrail metrics:",
     formatList(group.guardrailMetrics),
-    tailEvents.length > 0 ? "Recent transcript events:" : "",
-    ...tailEvents.map((event) => `- ${event.direction ?? "event"} ${event.authorLabel ?? event.authorId ?? "unknown"}: ${String(event.content ?? "").slice(0, 240)}`),
     "</clawclave_group_context>"
+  ].join("\n");
+}
+
+function buildMappedContext({ root, group, ids, tailEvents }) {
+  const groupWorkspace = buildGroupContext(root, group);
+  const sharedWorkspace = buildSharedGroupContext(root);
+  const transcriptTail = [
+    tailEvents.length > 0 ? "Recent transcript events:" : "",
+    ...tailEvents.map((event) => `- ${event.direction ?? "event"} ${event.authorLabel ?? event.authorId ?? "unknown"}: ${String(event.content ?? "").slice(0, 240)}`)
   ].filter((line) => line !== "").join("\n");
+  const text = [
+    buildGroupGoalSummary({ group, ids }),
+    groupWorkspace.text,
+    sharedWorkspace.text,
+    transcriptTail ? `<clawclave_transcript_tail source="memory/clawclave/transcripts" events="${tailEvents.length}">\n${transcriptTail}\n</clawclave_transcript_tail>` : ""
+  ].filter(Boolean).join("\n\n");
+  return {
+    text,
+    audit: {
+      files: groupWorkspace.loaded,
+      sharedFiles: sharedWorkspace.loaded,
+      transcriptTail: {
+        source: "memory/clawclave/transcripts",
+        events: tailEvents.length
+      }
+    }
+  };
 }
 
 function buildHostedTurnContext({ state, accountId }) {
@@ -1505,6 +1618,16 @@ export function buildPromptHookDecision({ root, event = {}, ctx = {}, config = {
   const ids = resolveDiscordIds(event, ctx);
   const goals = loadGoals(root, normalizedConfig);
   const group = resolveGroup(goals, ids);
+  if (!group && !isDiscordGuildChannel(ids)) {
+    return {
+      decision: undefined,
+      audit: {
+        loaded: false,
+        reason: "not a Discord guild channel",
+        channelId: ids.channelId
+      }
+    };
+  }
   const onboardingResult = ensureOnboardingState({ root, config: normalizedConfig, ids, event, group });
   const onboardingPath = onboardingResult.path ?? (ids.channelId ? resolve(resolvePath(root, normalizedConfig.onboardingDir), `${ids.channelId}.json`) : undefined);
   const onboardingState = onboardingPath ? readJson(onboardingPath, null) : null;
@@ -1512,9 +1635,10 @@ export function buildPromptHookDecision({ root, event = {}, ctx = {}, config = {
     ? transcriptFile(root, normalizedConfig, group, ids, new Date().toISOString())
     : null;
   const tailEvents = transcript ? readLastJsonlEvents(transcript, normalizedConfig.tailEvents) : [];
-  const groupText = group
-    ? buildMappedContext({ group, ids, tailEvents })
-    : buildUnmappedContext({ ids, onboardingState });
+  const mappedContext = group
+    ? buildMappedContext({ root, group, ids, tailEvents })
+    : { text: buildUnmappedContext({ ids, onboardingState }), audit: {} };
+  const groupText = mappedContext.text;
   const hostedTurn = readActiveHostedTurn(root, normalizedConfig, ids).state;
   const hostedTurnText = buildHostedTurnContext({
     state: hostedTurn,
@@ -1535,7 +1659,10 @@ export function buildPromptHookDecision({ root, event = {}, ctx = {}, config = {
       groupSlug: group?.slug,
       unmapped: !group,
       resolvedBy: group ? "channelId" : "unmapped-channel",
-      channelId: ids.channelId
+      channelId: ids.channelId,
+      files: mappedContext.audit.files,
+      sharedFiles: mappedContext.audit.sharedFiles,
+      transcriptTail: mappedContext.audit.transcriptTail
     }
   };
 }

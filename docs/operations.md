@@ -35,6 +35,11 @@ The Discord REST catchup worker repairs the common window where the provider was
 offline or restarting. It can only backfill messages the configured host account
 can still read from Discord history.
 
+Catchup is persistence-only. It must not create onboarding prompts, open hosted
+turn state, update participant state, send Discord messages, add reactions, or
+otherwise drive conversation orchestration. Live hooks may update orchestration
+state; REST backfill only repairs evidence.
+
 ## Daily Self-Check
 
 The self-check worker runs catchup first, audits key-path drift, then posts a

@@ -11,7 +11,8 @@ const commands = {
   "audit-communication-contracts": "../src/audit-communication-contracts.js",
   "audit-group-orchestration-rules": "../src/audit-group-orchestration-rules.js",
   "self-check": "../src/self-check.js",
-  "prune-expired-discord-thread-bindings": "../src/thread-bindings-maintenance.js"
+  "prune-expired-discord-thread-bindings": "../src/thread-bindings-maintenance.js",
+  "distill-agent-memory": "../src/agent-memory-distillation.js"
 };
 
 function usage() {
@@ -27,6 +28,7 @@ Commands:
   audit-group-orchestration-rules
   self-check
   prune-expired-discord-thread-bindings
+  distill-agent-memory
 `;
 }
 

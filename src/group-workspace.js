@@ -1079,6 +1079,16 @@ function memoryFileHasEvent(memoryFile, marker) {
   return false;
 }
 
+function memoryDirEventFile(eventsDir, marker) {
+  if (!marker || !existsSync(eventsDir)) return undefined;
+  for (const entry of readdirSync(eventsDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+    const file = resolve(eventsDir, entry.name);
+    if (memoryFileHasEvent(file, marker)) return file;
+  }
+  return undefined;
+}
+
 function ensureDiscordMemoryReadme(root) {
   const readme = resolve(root, DISCORD_MEMORY_DIR, "README.md");
   if (existsSync(readme)) return;
@@ -1145,9 +1155,12 @@ export function appendDiscordMemoryEvent(root, event, { group } = {}) {
   const month = monthFromTimestamp(timestamp);
   const memoryFile = resolve(eventsDir, `${month}.jsonl`);
   const relativeMemoryFile = memoryFile.slice(root.length + 1);
-  if (memoryFileHasEvent(memoryFile, normalizedEvent.memoryEventId)) {
+  const existingMemoryFile = memoryFileHasEvent(memoryFile, normalizedEvent.memoryEventId)
+    ? memoryFile
+    : memoryDirEventFile(eventsDir, normalizedEvent.memoryEventId);
+  if (existingMemoryFile) {
     return {
-      memoryFile,
+      memoryFile: existingMemoryFile,
       memoryManifest: resolve(dir, "manifest.json"),
       memoryDuplicate: true,
       memoryAppended: false,
@@ -1195,6 +1208,16 @@ function ledgerEventMarker(event) {
   const id = event.messageId || createHash("sha256").update(JSON.stringify(event)).digest("hex").slice(0, 16);
   const direction = event.direction || "unknown";
   return `<!-- discord-ledger:event ${type}:${id}:${direction} -->`;
+}
+
+function ledgerDirEventFile(dir, marker) {
+  if (!marker || !existsSync(dir)) return undefined;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const file = resolve(dir, entry.name);
+    if (readFileSync(file, "utf8").includes(marker)) return file;
+  }
+  return undefined;
 }
 
 function renderMarkdownLedgerEvent(event, { group } = {}) {
@@ -1246,10 +1269,14 @@ export function appendDiscordMarkdownLedgerEvent(root, event, { group } = {}) {
   const dir = ledgerScopeForEvent(root, normalizedEvent, group);
   mkdirSync(dir, { recursive: true });
   const ledgerFile = resolve(dir, `${month}.md`);
+  const marker = ledgerEventMarker(normalizedEvent);
+  const existingLedgerFile = ledgerDirEventFile(dir, marker);
+  if (existingLedgerFile) {
+    return { ledgerFile: existingLedgerFile, ledgerDuplicate: true, ledgerAppended: false };
+  }
   if (!existsSync(ledgerFile)) {
     writeFileSync(ledgerFile, ledgerFileHeader(normalizedEvent, month, { group }));
   }
-  const marker = ledgerEventMarker(normalizedEvent);
   const current = readFileSync(ledgerFile, "utf8");
   if (current.includes(marker)) {
     return { ledgerFile, ledgerDuplicate: true, ledgerAppended: false };
