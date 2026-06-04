@@ -43,6 +43,21 @@ function writeGoals(root) {
   );
 }
 
+function writeGroupWorkspace(root) {
+  mkdirSync(resolve(root, "workspace/groups/ops"), { recursive: true });
+  mkdirSync(resolve(root, "workspace/groups/discussions"), { recursive: true });
+  writeFileSync(resolve(root, "workspace/AGENTS.md"), "# Org Rules\n\nKeep replies short.");
+  writeFileSync(resolve(root, "workspace/groups/communication-contracts.md"), "# Contracts\n\nEvidence first.");
+  writeFileSync(resolve(root, "workspace/groups/interaction-taxonomy.md"), "# Taxonomy\n\nUse the lightest mode.");
+  writeFileSync(resolve(root, "workspace/groups/discussions/README.md"), "# Discussions\n\nTrack open work.");
+  writeFileSync(resolve(root, "workspace/groups/ops/IDENTITY.md"), "# Ops Identity\n\nClose incidents with evidence.");
+  writeFileSync(resolve(root, "workspace/groups/ops/AGENTS.md"), "# Ops Agent Rules\n\nPrefer verified state.");
+  writeFileSync(resolve(root, "workspace/groups/ops/MEMORY.md"), "# Ops Memory\n\nDo not repeat unverified fixes.");
+  writeFileSync(resolve(root, "workspace/groups/ops/SOUL.md"), "# Ops Soul\n\nCalm and concrete.");
+  writeFileSync(resolve(root, "workspace/groups/ops/USER.md"), "# Ops User\n\nThe user wants evidence.");
+  writeFileSync(resolve(root, "workspace/groups/ops/HEARTBEAT.md"), "# Ops Heartbeat\n\nReview daily.");
+}
+
 function mockJsonResponse(body, init = {}) {
   return new Response(JSON.stringify(body), {
     status: init.status ?? 200,
@@ -133,6 +148,7 @@ test("buildPromptHookDecision injects mapped group context", () => {
   const root = tempRoot();
   try {
     writeGoals(root);
+    writeGroupWorkspace(root);
     const result = buildPromptHookDecision({
       root,
       event: {},
@@ -142,6 +158,11 @@ test("buildPromptHookDecision injects mapped group context", () => {
     assert.equal(result.audit.groupSlug, "ops");
     assert.match(result.decision.appendSystemContext, /clawclave_group_context/);
     assert.match(result.decision.appendSystemContext, /Close incidents with evidence/);
+    assert.match(result.decision.appendSystemContext, /<group_file name="MEMORY.md"/);
+    assert.match(result.decision.appendSystemContext, /Do not repeat unverified fixes/);
+    assert.match(result.decision.appendSystemContext, /<group_shared_file path="workspace\/AGENTS.md"/);
+    assert.ok(result.audit.files.some((entry) => entry.file === "MEMORY.md"));
+    assert.ok(result.audit.sharedFiles.some((entry) => entry.file === "workspace/AGENTS.md"));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -205,6 +226,50 @@ test("unmapped Discord channels create onboarding state", () => {
   }
 });
 
+test("non-host group inbound hooks skip shared persistence", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const result = appendHookTranscriptEvent({
+      root,
+      event: { content: "hi from group", messageId: "m1", metadata: { guildId: "g1", originatingTo: "123" } },
+      ctx: { channelId: "discord", agentId: "linus" },
+      direction: "inbound"
+    });
+
+    assert.equal(result.skipped, true);
+    assert.equal(result.reason, "shared Discord group persistence is owned by host account");
+    assert.equal(result.sharedOwner, "host");
+    assert.equal(result.accountId, "linus");
+    assert.equal(existsSync(resolve(root, "memory/clawclave/transcripts/groups/ops/channels/123")), false);
+    assert.equal(existsSync(resolve(root, "memory/clawclave/discord/raw/guilds/g1/channels/123/events")), false);
+    assert.equal(existsSync(resolve(root, "workspace/groups/onboarding/active/123.json")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("host group inbound hooks own shared persistence", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const result = appendHookTranscriptEvent({
+      root,
+      event: { content: "hi from group", messageId: "m1", metadata: { guildId: "g1", originatingTo: "123" } },
+      ctx: { channelId: "discord", agentId: "host" },
+      direction: "inbound"
+    });
+
+    assert.equal(result.appended, true);
+    assert.equal(result.skipped, undefined);
+    assert.equal(result.groupSlug, "ops");
+    assert.equal(existsSync(resolve(root, "memory/clawclave/transcripts/groups/ops/channels/123")), true);
+    assert.equal(existsSync(resolve(root, "memory/clawclave/discord/raw/guilds/g1/channels/123/events")), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("unmapped prompt context blocks normal business before onboarding", () => {
   const root = tempRoot();
   try {
@@ -238,13 +303,13 @@ test("raw ingress creates onboarding state and prompts only from host account", 
     };
     const nonHost = recordDiscordRawIngress({ root, event, accountId: "other" });
     assert.equal(nonHost.handled, true);
+    assert.equal(nonHost.skipped, true);
+    assert.equal(nonHost.orchestrated, false);
     assert.equal(nonHost.visiblePrompt, undefined);
-    assert.equal(nonHost.rawJournal.appended, true);
-    assert.equal(nonHost.transcript.appended, true);
-    assert.match(readFileSync(nonHost.rawJournal.file, "utf8"), /"checkpoint":"discord_input"/);
+    assert.equal(nonHost.rawJournal.appended, false);
+    assert.equal(existsSync(resolve(root, "memory/clawclave/discord/raw/guilds/g1/channels/999/events")), false);
     const duplicate = recordDiscordRawIngress({ root, event, accountId: "other" });
-    assert.equal(duplicate.rawJournal.duplicate, true);
-    assert.equal(duplicate.transcript.duplicate, true);
+    assert.equal(duplicate.skipped, true);
     const host = recordDiscordRawIngress({ root, event: { ...event, id: "raw-2" }, accountId: "host" });
     assert.match(host.visiblePrompt, /这个群还没有初始化目标/);
     assert.equal(host.outputIntent.turnJournal.appended, true);
@@ -257,7 +322,7 @@ test("raw ingress creates onboarding state and prompts only from host account", 
         content: host.visiblePrompt,
         author: { id: "bot-1", username: "TianClaws", bot: true }
       },
-      accountId: "other"
+      accountId: "host"
     });
     assert.equal(delivered.outputDelivery.matched, true);
     assert.equal(delivered.outputDelivery.rawJournal.appended, true);
@@ -266,6 +331,51 @@ test("raw ingress creates onboarding state and prompts only from host account", 
     assert.match(readFileSync(delivered.outputDelivery.turnJournal.file, "utf8"), /"checkpoint":"discord_output"/);
     const again = recordDiscordRawIngress({ root, event: { ...event, id: "raw-3" }, accountId: "host" });
     assert.match(again.visiblePrompt, /等待目标确认/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("direct messages are persisted without group onboarding prompts", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const event = {
+      id: "dm-1",
+      channel_id: "1476919184280653915",
+      timestamp: "2026-06-03T11:31:25.131Z",
+      content: "ping 0603",
+      author: { id: "u1", username: "tester" }
+    };
+
+    const result = recordDiscordRawIngress({ root, event, accountId: "host" });
+
+    assert.equal(result.handled, true);
+    assert.equal(result.orchestrated, false);
+    assert.equal(result.reason, "direct message persistence only");
+    assert.equal(result.visiblePrompt, undefined);
+    assert.equal(result.rawJournal.appended, true);
+    assert.equal(result.transcript.appended, true);
+    assert.equal(existsSync(resolve(root, "workspace/groups/onboarding/active/1476919184280653915.json")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("direct message prompt context does not inject unmapped group onboarding", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    const result = buildPromptHookDecision({
+      root,
+      event: { metadata: { originatingTo: "1476919184280653915" } },
+      ctx: { channelId: "discord", agentId: "host", messageId: "dm-1" }
+    });
+
+    assert.equal(result.decision, undefined);
+    assert.equal(result.audit.loaded, false);
+    assert.equal(result.audit.reason, "not a Discord guild channel");
+    assert.equal(existsSync(resolve(root, "workspace/groups/onboarding/active/1476919184280653915.json")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -354,6 +464,7 @@ test("raw ingress tolerates circular Discord raw data", () => {
     const raw = readFileSync(result.rawJournal.file, "utf8");
     assert.match(raw, /"content":"ping"/);
     assert.match(raw, /"owner":"\[Circular\]"/);
+    assert.equal(existsSync(resolve(root, "workspace/groups/onboarding/active/123.json")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -840,7 +951,10 @@ test("host outbound expert mentions create hosted turn state", () => {
     const statePath = resolve(root, "workspace/groups/discussions/active/123.json");
     const state = JSON.parse(readFileSync(statePath, "utf8"));
     assert.equal(state.status, "open");
+    assert.equal(state.host, "host");
+    assert.deepEqual(state.participants.map((agent) => [agent.accountId, agent.status]), [["linus", "pending"]]);
     assert.deepEqual(state.expectedAgents.map((agent) => agent.accountId), ["linus"]);
+    assert.equal(state.policy, undefined);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -884,6 +998,7 @@ test("expected bot inbound reply is recorded against hosted turn", () => {
     assert.equal(result.hostedTurn.updated, true);
     const state = JSON.parse(readFileSync(resolve(root, "workspace/groups/discussions/active/123.json"), "utf8"));
     assert.deepEqual(state.receivedAgents, ["linus"]);
+    assert.deepEqual(state.participants.map((agent) => [agent.accountId, agent.status]), [["linus", "replied"]]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

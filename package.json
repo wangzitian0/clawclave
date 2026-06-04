@@ -36,7 +36,8 @@
     "./audit-communication-contracts": "./src/audit-communication-contracts.js",
     "./audit-group-orchestration-rules": "./src/audit-group-orchestration-rules.js",
     "./self-check": "./src/self-check.js",
-    "./thread-bindings-maintenance": "./src/thread-bindings-maintenance.js"
+    "./thread-bindings-maintenance": "./src/thread-bindings-maintenance.js",
+    "./agent-memory-distillation": "./src/agent-memory-distillation.js"
   },
   "bin": {
     "clawclave": "bin/clawclave.js"
@@ -59,7 +60,7 @@
     "test": "node --test",
     "coverage": "c8 --all --include 'index.js' --include 'src/**/*.js' --reporter=text --reporter=lcov node --test",
     "coverage:check": "c8 --all --include 'index.js' --include 'src/**/*.js' --reporter=text --reporter=lcov --check-coverage --statements 50 --branches 50 --functions 50 --lines 50 node --test",
-    "check": "node --check index.js && node --check src/runtime.js && node --check src/group-workspace.js && node --check src/sync-group-goals.js && node --check src/onboard-discord-group.js && node --check src/audit-discord-group-runtime.js && node --check src/discussion-audits.js && node --check src/audit-discussion-lifecycle.js && node --check src/audit-communication-contracts.js && node --check src/audit-group-orchestration-rules.js && node --check src/self-check.js && node --check src/thread-bindings-maintenance.js && node --check bin/clawclave.js && node --check test/runtime.test.js",
+    "check": "node --check index.js && node --check src/runtime.js && node --check src/group-workspace.js && node --check src/sync-group-goals.js && node --check src/onboard-discord-group.js && node --check src/audit-discord-group-runtime.js && node --check src/discussion-audits.js && node --check src/audit-discussion-lifecycle.js && node --check src/audit-communication-contracts.js && node --check src/audit-group-orchestration-rules.js && node --check src/self-check.js && node --check src/thread-bindings-maintenance.js && node --check src/agent-memory-distillation.js && node --check bin/clawclave.js && node --check test/runtime.test.js",
     "verify": "npm run check && npm test",
     "pack:dry-run": "npm pack --dry-run",
     "prepublishOnly": "npm run verify"
