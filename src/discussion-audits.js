@@ -198,8 +198,10 @@ export function auditHostedContract(state, path, root = repoRoot, issues = []) {
   }
 
   if (state.workType === "participation") {
-    if (!state.delivery || state.delivery.required !== "message_tool" || state.delivery.visibleMessageRequired !== true) {
-      pushIssue(issues, root, "error", path, "participation state requires delivery.required=message_tool and visibleMessageRequired=true");
+    const deliveryRequired = state.delivery?.required;
+    const validDelivery = deliveryRequired === "ordinary_reply" || deliveryRequired === "automatic_visible_reply" || deliveryRequired === "message_tool" || deliveryRequired === "message_tool_visible_reply";
+    if (!state.delivery || !validDelivery || state.delivery.visibleMessageRequired !== true) {
+      pushIssue(issues, root, "error", path, "participation state requires visible delivery via ordinary_reply, automatic_visible_reply, message_tool, or message_tool_visible_reply");
     }
     auditParticipants(state, path, root, issues);
   }

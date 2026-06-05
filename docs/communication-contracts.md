@@ -36,7 +36,9 @@ State contract:
 - `collaboration`: usually `parallel`; `sequential` only when order matters
 - `successCriteria.kind`: `participation-event`
 - `successCriteria.requiredVisibleArtifact`: `host-summary`
-- `delivery.required`: `message_tool`
+- `delivery.required`: `ordinary_reply` while group visible replies use
+  automatic delivery. Use `message_tool` only after the upstream
+  `message_tool_only` delivery-mirror/session writer bug is fixed.
 - `delivery.visibleMessageRequired`: `true`
 
 ## Hosted Discussion
