@@ -15,7 +15,8 @@ import {
   resolveDiscordIds,
   runDailySelfCheck,
   runDiscordCatchup,
-  runDriftAudit
+  runDriftAudit,
+  startClawclaveMaintenance
 } from "../src/runtime.js";
 
 function tempRoot() {
@@ -242,7 +243,7 @@ test("non-host group inbound hooks skip shared persistence", () => {
     assert.equal(result.sharedOwner, "host");
     assert.equal(result.accountId, "linus");
     assert.equal(existsSync(resolve(root, "memory/clawclave/transcripts/groups/ops/channels/123")), false);
-    assert.equal(existsSync(resolve(root, "memory/clawclave/discord/raw/guilds/g1/channels/123/events")), false);
+    assert.equal(existsSync(resolve(root, "memory/discord/raw/guilds/g1/channels/123/events")), false);
     assert.equal(existsSync(resolve(root, "workspace/groups/onboarding/active/123.json")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -264,7 +265,7 @@ test("host group inbound hooks own shared persistence", () => {
     assert.equal(result.skipped, undefined);
     assert.equal(result.groupSlug, "ops");
     assert.equal(existsSync(resolve(root, "memory/clawclave/transcripts/groups/ops/channels/123")), true);
-    assert.equal(existsSync(resolve(root, "memory/clawclave/discord/raw/guilds/g1/channels/123/events")), true);
+    assert.equal(existsSync(resolve(root, "memory/discord/raw/guilds/g1/channels/123/events")), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -307,7 +308,7 @@ test("raw ingress creates onboarding state and prompts only from host account", 
     assert.equal(nonHost.orchestrated, false);
     assert.equal(nonHost.visiblePrompt, undefined);
     assert.equal(nonHost.rawJournal.appended, false);
-    assert.equal(existsSync(resolve(root, "memory/clawclave/discord/raw/guilds/g1/channels/999/events")), false);
+    assert.equal(existsSync(resolve(root, "memory/discord/raw/guilds/g1/channels/999/events")), false);
     const duplicate = recordDiscordRawIngress({ root, event, accountId: "other" });
     assert.equal(duplicate.skipped, true);
     const host = recordDiscordRawIngress({ root, event: { ...event, id: "raw-2" }, accountId: "host" });
@@ -522,13 +523,16 @@ test("OpenClaw output intent and outbound result write separate journals", () =>
     const event = { content: "done", messageId: "m3", metadata: { originatingTo: "123" } };
     const intent = recordOpenClawOutputIntent({ root, event, ctx });
     assert.equal(intent.recorded, true);
+    assert.match(intent.file, /memory\/openclaw\/turns\/discord\/accounts\/host\/sessions\/123\/\d{4}-/);
     assert.match(readFileSync(intent.file, "utf8"), /"phase":"output_intent"/);
     assert.match(readFileSync(intent.file, "utf8"), /"checkpoint":"openclaw_output"/);
     const result = recordOpenClawOutboundResult({ root, event, ctx });
     assert.equal(result.recorded, true);
     assert.equal(result.rawJournal.appended, true);
+    assert.match(result.rawJournal.file, /memory\/discord\/raw\/outbound\/accounts\/host\/channels\/123\/events\/\d{4}-/);
     assert.match(readFileSync(result.rawJournal.file, "utf8"), /"phase":"sent"/);
     assert.match(readFileSync(result.rawJournal.file, "utf8"), /"checkpoint":"discord_output"/);
+    assert.match(result.turnJournal.file, /memory\/openclaw\/turns\/discord\/accounts\/host\/sessions\/123\/\d{4}-/);
     assert.match(readFileSync(result.turnJournal.file, "utf8"), /"phase":"output_result"/);
     assert.match(readFileSync(result.turnJournal.file, "utf8"), /"checkpoint":"discord_output"/);
   } finally {
@@ -539,6 +543,14 @@ test("OpenClaw output intent and outbound result write separate journals", () =>
 test("self-check report summarizes catchup and errors", () => {
   const report = formatSelfCheckReport({
     startedAt: "2026-05-26T00:00:00.000Z",
+    maintenance: {
+      workerId: "worker-1",
+      active: true,
+      startedAt: "2026-05-26T00:00:00.000Z",
+      timers: {
+        catchupInterval: { nextRunAt: "2026-05-26T00:10:00.000Z" }
+      }
+    },
     catchup: {
       lookbackMinutes: 180,
       channels: 2,
@@ -550,8 +562,35 @@ test("self-check report summarizes catchup and errors", () => {
     }
   });
   assert.match(report, /NEEDS_ATTENTION/);
+  assert.match(report, /Worker: worker-1 active=true/);
+  assert.match(report, /catchupInterval=2026-05-26T00:10:00.000Z/);
   assert.match(report, /Channels scanned: 2/);
   assert.match(report, /123: missing access/);
+});
+
+test("startClawclaveMaintenance keeps a single worker and writes state", () => {
+  const root = tempRoot();
+  try {
+    const config = { catchup: { enabled: false }, selfCheck: { enabled: false } };
+    const firstStop = startClawclaveMaintenance({ root, config });
+    const first = JSON.parse(readFileSync(resolve(root, "memory/clawclave/maintenance/state.json"), "utf8"));
+    assert.equal(first.active, true);
+    assert.equal(first.stopReason, null);
+    const secondStop = startClawclaveMaintenance({ root, config });
+    const second = JSON.parse(readFileSync(resolve(root, "memory/clawclave/maintenance/state.json"), "utf8"));
+    assert.equal(second.active, true);
+    assert.notEqual(second.workerId, first.workerId);
+    secondStop("test-stop");
+    const stopped = JSON.parse(readFileSync(resolve(root, "memory/clawclave/maintenance/state.json"), "utf8"));
+    assert.equal(stopped.active, false);
+    assert.equal(stopped.stopReason, "test-stop");
+    firstStop("late-old-stop");
+    const afterLateOldStop = JSON.parse(readFileSync(resolve(root, "memory/clawclave/maintenance/state.json"), "utf8"));
+    assert.equal(afterLateOldStop.workerId, second.workerId);
+    assert.equal(afterLateOldStop.stopReason, "test-stop");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("runDiscordCatchup backfills recent Discord history and skips old messages", async () => {
@@ -892,8 +931,8 @@ test("runDriftAudit reports key-path and catchup target drift without model call
     );
     mkdirSync(resolve(root, "memory/clawclave/transcripts/channels/1476887475770228827"), { recursive: true });
     writeFileSync(resolve(root, "memory/clawclave/transcripts/channels/1476887475770228827/2026-05.jsonl"), "{}\n");
-    mkdirSync(resolve(root, "memory/clawclave/discord/raw/guilds/1/channels/321/events"), { recursive: true });
-    writeFileSync(resolve(root, "memory/clawclave/discord/raw/guilds/1/channels/321/events/2026-05.jsonl"), "{}\n");
+    mkdirSync(resolve(root, "memory/discord/raw/guilds/1/channels/321/events"), { recursive: true });
+    writeFileSync(resolve(root, "memory/discord/raw/guilds/1/channels/321/events/2026-05.jsonl"), "{}\n");
     const report = runDriftAudit({
       root,
       config: { selfCheck: { setupChannelId: "789" } },
@@ -904,6 +943,9 @@ test("runDriftAudit reports key-path and catchup target drift without model call
     assert.equal(report.sources.onboardingChannels, 1);
     assert.equal(report.sources.memoryChannels, 1);
     assert.equal(report.sources.catchupTargets, 4);
+    assert.equal(report.sources.canonicalDiscordRawPath, "memory/discord/raw/**");
+    assert.equal(report.sources.canonicalOpenClawTurnPath, "memory/openclaw/turns/**");
+    assert.equal(report.sources.legacyEvidenceMirrors.discordRawJsonl, 0);
     assert.ok(report.issues.some((issue) => issue.code === "channels_discovered_outside_config"));
     assert.equal(report.discoveredOutsideConfig.includes("1476887475770228827"), false);
     assert.deepEqual(report.checkpointContract.map((item) => item.checkpoint), [

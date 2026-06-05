@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-const DEFAULT_MEMORY_DIR = "memory/clawclave";
+const DEFAULT_TURN_DIR = "memory/openclaw/turns";
 const DEFAULT_AGENT_WORKSPACE_DIR = "workspace/agents";
 const DEFAULT_LIMIT = 200;
 const FEEDBACK_RE = /(不对|错误|失败|没反应|没有回复|挂了|可以|好了|符合预期|不错|修复|为什么|root cause|根因|bug|error|failed|works?|good)/i;
@@ -59,8 +59,8 @@ export function listAgentIds(root, options = {}) {
 }
 
 export function readAgentTurnRecords(root, agentId, options = {}) {
-  const memoryDir = options.memoryDir ?? DEFAULT_MEMORY_DIR;
-  const dir = resolve(root, memoryDir, "openclaw/turns/discord/accounts", agentId);
+  const turnDir = options.turnDir ?? options.memoryDir ?? DEFAULT_TURN_DIR;
+  const dir = resolve(root, turnDir, "discord/accounts", agentId);
   const records = [];
   for (const file of walkJsonl(dir)) {
     for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
@@ -100,7 +100,7 @@ function summarizeRecords(agentId, records) {
     "",
     "## Scope",
     "",
-    `- Source: memory/clawclave/openclaw/turns/discord/accounts/${agentId}/`,
+    `- Source: memory/openclaw/turns/discord/accounts/${agentId}/`,
     `- Records scanned: ${records.length}`,
     `- Sessions touched: ${sessions.size}`,
     `- Channels touched: ${channels.size}`,

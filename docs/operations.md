@@ -13,14 +13,21 @@ workspace/groups/onboarding/active/<channel-id>.json
 workspace/groups/discussions/active/<channel-or-thread-id>.json
 workspace/groups/discussions/events/<yyyy-mm>.jsonl
 memory/clawclave/transcripts/...
-memory/clawclave/discord/raw/...
-memory/clawclave/openclaw/turns/...
+memory/discord/raw/...
+memory/openclaw/turns/...
 memory/clawclave/catchup/state.json
 memory/clawclave/self-check/state.json
+memory/clawclave/maintenance/state.json
 ```
 
 These files are operational evidence, not package source. Do not publish runtime
 memory, transcripts, credentials, or host-specific configuration to npm.
+
+`memory/discord/raw/**` and `memory/openclaw/turns/**` are the canonical IO
+evidence layers. `memory/clawclave/transcripts/**` is a plugin-owned normalized
+projection for prompt context and review. Older deployments may still have
+`memory/clawclave/discord/raw/**` or `memory/clawclave/openclaw/turns/**`; treat
+those as legacy evidence mirrors, not active write targets.
 
 ## Persistence Model
 
@@ -46,7 +53,12 @@ The self-check worker runs catchup first, audits key-path drift, then posts a
 compact report to the configured setup thread. It creates the thread when
 Discord permissions allow it. The report includes scanned channel count, fetched
 message count, appended record count, duplicate count, channel errors, merged
-catchup target counts, and drift issues.
+catchup target counts, drift issues, maintenance worker identity, and next-run
+timestamps.
+
+The maintenance worker is guarded by a process-level singleton. A repeated
+`gateway_start` replaces the previous worker before scheduling new timers and
+writes current state to `memory/clawclave/maintenance/state.json`.
 
 ## Operational Guardrails
 

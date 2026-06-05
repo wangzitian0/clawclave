@@ -18,9 +18,9 @@ test("distillAgentMemory writes reviewed candidate memory under the agent worksp
   const root = tempRoot();
   try {
     mkdirSync(resolve(root, "workspace/agents/tianclaw"), { recursive: true });
-    mkdirSync(resolve(root, "memory/clawclave/openclaw/turns/discord/accounts/tianclaw/sessions/s1"), { recursive: true });
+    mkdirSync(resolve(root, "memory/openclaw/turns/discord/accounts/tianclaw/sessions/s1"), { recursive: true });
     writeFileSync(
-      resolve(root, "memory/clawclave/openclaw/turns/discord/accounts/tianclaw/sessions/s1/2026-06.jsonl"),
+      resolve(root, "memory/openclaw/turns/discord/accounts/tianclaw/sessions/s1/2026-06.jsonl"),
       [
         JSON.stringify({
           timestamp: "2026-06-04T01:00:00.000Z",
@@ -50,6 +50,7 @@ test("distillAgentMemory writes reviewed candidate memory under the agent worksp
     assert.equal(existsSync(result.outputFile), true);
     const body = readFileSync(result.outputFile, "utf8");
     assert.match(body, /Reviewed: false/);
+    assert.match(body, /memory\/openclaw\/turns\/discord\/accounts\/tianclaw/);
     assert.match(body, /这个不对/);
     assert.match(body, /\[REDACTED_SECRET\]/);
     assert.doesNotMatch(body, /abcdefghijklmnopqrstuvwxyz012345/);

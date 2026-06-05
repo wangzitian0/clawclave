@@ -43,6 +43,8 @@ const DEFAULT_CONFIG = {
   }
 };
 
+const MAINTENANCE_SINGLETON_KEY = Symbol.for("clawclave.maintenance.worker");
+
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -64,6 +66,18 @@ function resolvePath(root, value) {
   const path = firstString(value);
   if (!path) return undefined;
   return isAbsolute(path) ? path : resolve(root, path);
+}
+
+function canonicalMemoryRoot(root) {
+  return resolve(root, "memory");
+}
+
+function discordRawRoot(root) {
+  return resolve(canonicalMemoryRoot(root), "discord/raw");
+}
+
+function openclawTurnRoot(root) {
+  return resolve(canonicalMemoryRoot(root), "openclaw/turns");
 }
 
 function isDiscordGuildChannel(ids = {}) {
@@ -353,27 +367,24 @@ function transcriptFile(root, config, group, ids, timestamp) {
 }
 
 function rawInboundFile(root, config, ids, timestamp) {
-  const memoryRoot = resolvePath(root, config.memoryDir);
   const scope = ids.guildId
-    ? `discord/raw/guilds/${ids.guildId}/channels/${ids.channelId ?? "unknown"}`
-    : `discord/raw/dms/${ids.channelId ?? "unknown"}`;
+    ? `guilds/${ids.guildId}/channels/${ids.channelId ?? "unknown"}`
+    : `dms/${ids.channelId ?? "unknown"}`;
   const threadPart = ids.threadId ? `/threads/${ids.threadId}` : "";
-  return resolve(memoryRoot, scope + threadPart, "events", `${monthFromTimestamp(timestamp)}.jsonl`);
+  return resolve(discordRawRoot(root), scope + threadPart, "events", `${monthFromTimestamp(timestamp)}.jsonl`);
 }
 
 function rawOutboundFile(root, config, ids, timestamp) {
-  const memoryRoot = resolvePath(root, config.memoryDir);
   const accountId = ids.accountId ?? "unknown";
   const channelId = ids.channelId ?? "unknown";
   const threadPart = ids.threadId ? `/threads/${ids.threadId}` : "";
-  return resolve(memoryRoot, `discord/raw/outbound/accounts/${accountId}/channels/${channelId}${threadPart}/events`, `${monthFromTimestamp(timestamp)}.jsonl`);
+  return resolve(discordRawRoot(root), `outbound/accounts/${accountId}/channels/${channelId}${threadPart}/events`, `${monthFromTimestamp(timestamp)}.jsonl`);
 }
 
 function openclawTurnFile(root, config, input) {
-  const memoryRoot = resolvePath(root, config.memoryDir);
   const accountId = input.accountId ?? input.agentId ?? "unknown";
   const sessionKey = safeSlug(input.sessionKey ?? input.channelId ?? input.threadId ?? "unknown");
-  return resolve(memoryRoot, `openclaw/turns/discord/accounts/${accountId}/sessions/${sessionKey}`, `${monthFromTimestamp(input.timestamp)}.jsonl`);
+  return resolve(openclawTurnRoot(root), `discord/accounts/${accountId}/sessions/${sessionKey}`, `${monthFromTimestamp(input.timestamp)}.jsonl`);
 }
 
 function transcriptDedupeKey(input) {
@@ -1176,23 +1187,40 @@ function walkFiles(root, visit) {
   }
 }
 
+function countJsonlFiles(root) {
+  let count = 0;
+  walkFiles(root, (file) => {
+    if (file.endsWith(".jsonl")) count += 1;
+  });
+  return count;
+}
+
+function collectChannelIdsFromFiles(base, patterns) {
+  const ids = new Set();
+  if (!base || !existsSync(base)) return ids;
+  walkFiles(base, (file) => {
+    const relative = file.slice(base.length + 1);
+    for (const pattern of patterns) {
+      for (const match of relative.matchAll(pattern)) addDiscordId(ids, match[1]);
+    }
+  });
+  return ids;
+}
+
 function collectMemoryChannelIds(root, config) {
   const ids = new Set();
-  const memoryRoot = resolvePath(root, config.memoryDir);
+  const rawRoot = discordRawRoot(root);
+  const turnRoot = openclawTurnRoot(root);
   const hostedTurnsRoot = resolvePath(root, config.hostedTurnsDir);
-  if (memoryRoot && existsSync(memoryRoot)) {
-    walkFiles(memoryRoot, (file) => {
-      const relative = file.slice(memoryRoot.length + 1);
-      for (const pattern of [
-        /(?:^|\/)discord\/raw\/guilds\/\d+\/channels\/(\d+)(?:\/|$)/g,
-        /(?:^|\/)transcripts\/guilds\/\d+\/channels\/(\d+)(?:\/|$)/g,
-        /(?:^|\/)transcripts\/groups\/[^/]+\/channels\/(\d+)(?:\/|$)/g,
-        /(?:^|\/)threads\/(\d+)(?:\/|$)/g
-      ]) {
-        for (const match of relative.matchAll(pattern)) addDiscordId(ids, match[1]);
-      }
-    });
-  }
+  for (const id of collectChannelIdsFromFiles(rawRoot, [
+    /(?:^|\/)guilds\/\d+\/channels\/(\d+)(?:\/|$)/g,
+    /(?:^|\/)dms\/(\d+)(?:\/|$)/g,
+    /(?:^|\/)outbound\/accounts\/[^/]+\/channels\/(\d+)(?:\/|$)/g,
+    /(?:^|\/)threads\/(\d+)(?:\/|$)/g
+  ])) addDiscordId(ids, id);
+  for (const id of collectChannelIdsFromFiles(turnRoot, [
+    /(?:^|\/)sessions\/(?:discord-channel-)?(\d+)(?:\/|$)/g
+  ])) addDiscordId(ids, id);
   if (hostedTurnsRoot && existsSync(hostedTurnsRoot)) {
     walkFiles(hostedTurnsRoot, (file) => {
       if (!file.endsWith(".json")) return;
@@ -1202,6 +1230,14 @@ function collectMemoryChannelIds(root, config) {
     });
   }
   return [...ids];
+}
+
+function collectLegacyEvidenceMirrorStats(root, config) {
+  const memoryRoot = resolvePath(root, config.memoryDir);
+  return {
+    discordRawJsonl: countJsonlFiles(resolve(memoryRoot, "discord/raw")),
+    openclawTurnsJsonl: countJsonlFiles(resolve(memoryRoot, "openclaw/turns"))
+  };
 }
 
 function collectDiscordCatchupChannelIds(root, openclawConfig = {}, config = normalizePluginConfig(), options = {}) {
@@ -1316,6 +1352,7 @@ export function runDriftAudit({ root, config = {}, openclawConfig = {}, catchup 
   const onboardingChannels = collectOnboardingChannelIds(root, normalizedConfig).sort();
   const memoryChannels = collectMemoryChannelIds(root, normalizedConfig).sort();
   const catchupTargets = collectDiscordCatchupChannelIds(root, openclawConfig, normalizedConfig, { includeMemory: true });
+  const legacyEvidenceMirrors = collectLegacyEvidenceMirrorStats(root, normalizedConfig);
   const issues = [];
   const requiredFlags = [
     ["transcriptWriter", normalizedConfig.transcriptWriter],
@@ -1366,14 +1403,18 @@ export function runDriftAudit({ root, config = {}, openclawConfig = {}, catchup 
       goalChannels: goalChannels.length,
       onboardingChannels: onboardingChannels.length,
       memoryChannels: memoryChannels.length,
-      catchupTargets: catchupTargets.length
+      catchupTargets: catchupTargets.length,
+      canonicalDiscordRawPath: "memory/discord/raw/**",
+      canonicalOpenClawTurnPath: "memory/openclaw/turns/**",
+      pluginTranscriptPath: `${normalizedConfig.memoryDir}/transcripts/**`,
+      legacyEvidenceMirrors
     },
     discoveredOutsideConfig,
     checkpointContract: [
-      { checkpoint: CHECKPOINTS.discordInput, source: "message_received + Discord REST catchup" },
-      { checkpoint: CHECKPOINTS.openclawInput, source: "message_received canonical inbound" },
-      { checkpoint: CHECKPOINTS.openclawOutput, source: "message_sending" },
-      { checkpoint: CHECKPOINTS.discordOutput, source: "message_sent" }
+      { checkpoint: CHECKPOINTS.discordInput, source: "message_received + Discord REST catchup", path: "memory/discord/raw/**" },
+      { checkpoint: CHECKPOINTS.openclawInput, source: "message_received canonical inbound", path: "memory/openclaw/turns/**" },
+      { checkpoint: CHECKPOINTS.openclawOutput, source: "message_sending", path: "memory/openclaw/turns/**" },
+      { checkpoint: CHECKPOINTS.discordOutput, source: "message_sent", path: "memory/discord/raw/** + memory/openclaw/turns/**" }
     ],
     issues
   };
@@ -1383,11 +1424,19 @@ export function formatSelfCheckReport(report = {}) {
   const errors = Array.isArray(report.catchup?.errors) ? report.catchup.errors : [];
   const drift = report.drift;
   const driftIssues = Array.isArray(drift?.issues) ? drift.issues : [];
+  const maintenance = report.maintenance;
+  const timerNextRuns = maintenance?.timers && isObject(maintenance.timers)
+    ? Object.entries(maintenance.timers)
+      .map(([name, timer]) => `${name}=${timer?.nextRunAt ?? "unknown"}`)
+      .join("; ")
+    : "";
   return [
     "Clawclave daily persistence audit",
     "",
     `Status: ${errors.length === 0 && (!drift || drift.status === "OK") ? "OK" : "NEEDS_ATTENTION"}`,
     `Started: ${report.startedAt ?? "unknown"}`,
+    maintenance ? `Worker: ${maintenance.workerId ?? "unknown"} active=${maintenance.active === false ? "false" : "true"} started=${maintenance.startedAt ?? "unknown"}` : "Worker: unknown",
+    timerNextRuns ? `Next runs: ${timerNextRuns}` : "Next runs: unknown",
     `Catchup lookback: ${report.catchup?.lookbackMinutes ?? "unknown"} minutes`,
     `Channels scanned: ${report.catchup?.channels ?? 0}`,
     `Discord messages fetched: ${report.catchup?.fetched ?? 0}`,
@@ -1457,6 +1506,7 @@ export async function runDailySelfCheck({ root, config = {}, openclawConfig = {}
     catchup: await runDiscordCatchup({ root, config: normalizedConfig, openclawConfig, logger, now })
   };
   report.drift = runDriftAudit({ root, config: normalizedConfig, openclawConfig, catchup: report.catchup });
+  report.maintenance = readMaintenanceState(root, normalizedConfig);
   if (deliverReport) {
     try {
       report.delivery = await sendSelfCheckReportToSetup({ config: normalizedConfig, openclawConfig, report });
@@ -1479,30 +1529,103 @@ export async function runDailySelfCheck({ root, config = {}, openclawConfig = {}
 
 export const runWeeklySelfCheck = runDailySelfCheck;
 
+function maintenanceStatePath(root, config) {
+  return resolve(resolvePath(root, config.memoryDir), "maintenance/state.json");
+}
+
+function maintenanceWorkerId() {
+  return `clawclave-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function timerState(kind, type, delayMs) {
+  return {
+    kind,
+    type,
+    delayMs,
+    intervalMs: type === "interval" ? delayMs : undefined,
+    nextRunAt: new Date(Date.now() + delayMs).toISOString()
+  };
+}
+
+function readMaintenanceState(root, config) {
+  return readJson(maintenanceStatePath(root, config), undefined);
+}
+
 export function startClawclaveMaintenance({ root, config = {}, openclawConfig = {}, logger }) {
   const normalizedConfig = normalizePluginConfig(config);
+  globalThis[MAINTENANCE_SINGLETON_KEY]?.stop?.("replaced-by-new-gateway-start");
+  const workerId = maintenanceWorkerId();
+  const statePath = maintenanceStatePath(root, normalizedConfig);
   const timers = [];
+  const state = {
+    version: 1,
+    workerId,
+    active: true,
+    startedAt: new Date().toISOString(),
+    stoppedAt: null,
+    stopReason: null,
+    timers: {},
+    lastRun: {}
+  };
+  const persistState = () => writeJson(statePath, state);
+  const updateLastRun = (name, patch) => {
+    state.lastRun[name] = {
+      ...(state.lastRun[name] ?? {}),
+      ...patch
+    };
+    persistState();
+  };
   const runCatchup = () => {
+    updateLastRun("catchup", { startedAt: new Date().toISOString(), ok: undefined, error: undefined });
     runDiscordCatchup({ root, config: normalizedConfig, openclawConfig, logger }).catch((error) => {
-      logger?.warn?.(`clawclave: catchup worker failed: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      logger?.warn?.(`clawclave: catchup worker failed: ${message}`);
+      updateLastRun("catchup", { finishedAt: new Date().toISOString(), ok: false, error: message });
+    }).then((result) => {
+      if (result) updateLastRun("catchup", { finishedAt: new Date().toISOString(), ok: true });
     });
   };
   const runSelfCheck = () => {
+    updateLastRun("selfCheck", { startedAt: new Date().toISOString(), ok: undefined, error: undefined });
     runDailySelfCheck({ root, config: normalizedConfig, openclawConfig, logger }).catch((error) => {
-      logger?.warn?.(`clawclave: self-check worker failed: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      logger?.warn?.(`clawclave: self-check worker failed: ${message}`);
+      updateLastRun("selfCheck", { finishedAt: new Date().toISOString(), ok: false, error: message });
+    }).then((result) => {
+      if (result) updateLastRun("selfCheck", { finishedAt: new Date().toISOString(), ok: true });
     });
   };
+  const addTimer = (name, kind, type, delayMs, fn) => {
+    const timer = type === "interval" ? setInterval(fn, delayMs) : setTimeout(fn, delayMs);
+    timers.push({ timer, clear: type === "interval" ? clearInterval : clearTimeout });
+    state.timers[name] = timerState(kind, type, delayMs);
+  };
   if (normalizedConfig.catchup.enabled) {
-    timers.push(setTimeout(runCatchup, normalizedConfig.catchup.initialDelayMinutes * 60 * 1000));
-    timers.push(setInterval(runCatchup, normalizedConfig.catchup.intervalMinutes * 60 * 1000));
+    addTimer("catchupInitial", "catchup", "timeout", normalizedConfig.catchup.initialDelayMinutes * 60 * 1000, runCatchup);
+    addTimer("catchupInterval", "catchup", "interval", normalizedConfig.catchup.intervalMinutes * 60 * 1000, runCatchup);
   }
   if (normalizedConfig.selfCheck.enabled) {
-    timers.push(setTimeout(runSelfCheck, normalizedConfig.selfCheck.initialDelayMinutes * 60 * 1000));
-    timers.push(setInterval(runSelfCheck, Math.min(normalizedConfig.selfCheck.intervalHours, 24) * 60 * 60 * 1000));
+    addTimer("selfCheckInitial", "selfCheck", "timeout", normalizedConfig.selfCheck.initialDelayMinutes * 60 * 1000, runSelfCheck);
+    addTimer("selfCheckInterval", "selfCheck", "interval", Math.min(normalizedConfig.selfCheck.intervalHours, 24) * 60 * 60 * 1000, runSelfCheck);
   }
-  return () => {
-    for (const timer of timers) clearTimeout(timer);
+  persistState();
+  let stopped = false;
+  const stop = (reason = "stopped") => {
+    if (stopped) return;
+    stopped = true;
+    for (const { timer, clear } of timers) clear(timer);
+    const current = globalThis[MAINTENANCE_SINGLETON_KEY];
+    if (current && current.workerId !== workerId) return;
+    state.active = false;
+    state.stoppedAt = new Date().toISOString();
+    state.stopReason = reason;
+    persistState();
+    if (current?.workerId === workerId) {
+      delete globalThis[MAINTENANCE_SINGLETON_KEY];
+    }
   };
+  globalThis[MAINTENANCE_SINGLETON_KEY] = { workerId, stop };
+  return stop;
 }
 
 function formatList(values) {
