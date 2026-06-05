@@ -171,4 +171,5 @@ export function runCli(args = process.argv.slice(2), root = process.cwd()) {
   }
 }
 
+/* c8 ignore next */
 if (import.meta.url === `file://${process.argv[1]}`) runCli();

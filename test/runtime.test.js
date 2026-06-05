@@ -208,6 +208,54 @@ test("buildPromptHookDecision injects host roster before hosted state exists", (
   }
 });
 
+test("buildPromptHookDecision injects hosted turn guidance for host, participant, and non-participant", () => {
+  const root = tempRoot();
+  try {
+    writeGoals(root);
+    mkdirSync(resolve(root, "workspace/groups/discussions/active"), { recursive: true });
+    writeFileSync(
+      resolve(root, "workspace/groups/discussions/active/123.json"),
+      `${JSON.stringify({
+        id: "turn-1",
+        status: "open",
+        mode: "parallel",
+        hostAccountId: "host",
+        deadlineAt: "2999-01-01T00:00:00.000Z",
+        expectedAgents: [
+          { accountId: "linus", displayName: "Linus" },
+          { accountId: "jeff", displayName: "Jeff" }
+        ],
+        receivedAgents: ["linus"]
+      }, null, 2)}\n`
+    );
+    const event = { metadata: { guildId: "g1", originatingTo: "123" } };
+    const host = buildPromptHookDecision({
+      root,
+      event,
+      ctx: { channelId: "discord", agentId: "host" }
+    });
+    assert.match(host.decision.appendSystemContext, /Host guidance/);
+    assert.match(host.decision.appendSystemContext, /Linus \(linus\): received/);
+    assert.match(host.decision.appendSystemContext, /Jeff \(jeff\): pending/);
+
+    const participant = buildPromptHookDecision({
+      root,
+      event,
+      ctx: { channelId: "discord", agentId: "jeff" }
+    });
+    assert.match(participant.decision.appendSystemContext, /Participant guidance/);
+
+    const other = buildPromptHookDecision({
+      root,
+      event,
+      ctx: { channelId: "discord", agentId: "simons" }
+    });
+    assert.match(other.decision.appendSystemContext, /Non-participant guidance/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("unmapped Discord channels create onboarding state", () => {
   const root = tempRoot();
   try {
@@ -588,6 +636,32 @@ test("startClawclaveMaintenance keeps a single worker and writes state", () => {
     const afterLateOldStop = JSON.parse(readFileSync(resolve(root, "memory/clawclave/maintenance/state.json"), "utf8"));
     assert.equal(afterLateOldStop.workerId, second.workerId);
     assert.equal(afterLateOldStop.stopReason, "test-stop");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("startClawclaveMaintenance records catchup and self-check timers when enabled", () => {
+  const root = tempRoot();
+  try {
+    const stop = startClawclaveMaintenance({
+      root,
+      config: {
+        catchup: { enabled: true, initialDelayMinutes: 60, intervalMinutes: 60 },
+        selfCheck: { enabled: true, initialDelayMinutes: 60, intervalHours: 24 }
+      }
+    });
+    const state = JSON.parse(readFileSync(resolve(root, "memory/clawclave/maintenance/state.json"), "utf8"));
+    assert.equal(state.active, true);
+    assert.deepEqual(Object.keys(state.timers).sort(), [
+      "catchupInitial",
+      "catchupInterval",
+      "selfCheckInitial",
+      "selfCheckInterval"
+    ]);
+    assert.equal(state.timers.catchupInitial.type, "timeout");
+    assert.equal(state.timers.catchupInterval.type, "interval");
+    stop("timer-test-stop");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

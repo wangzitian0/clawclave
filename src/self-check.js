@@ -55,6 +55,7 @@ export async function runCli(args = process.argv.slice(2), cwd = process.cwd()) 
   if (report?.drift?.status === "ERROR") process.exitCode = 1;
 }
 
+/* c8 ignore next 6 */
 if (import.meta.url === `file://${process.argv[1]}`) {
   runCli().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));

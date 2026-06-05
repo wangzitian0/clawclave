@@ -1,6 +1,6 @@
 {
   "name": "clawclave",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Discord group operations and onboarding for OpenClaw agent teams.",
   "type": "module",
   "license": "MIT",
@@ -58,8 +58,8 @@
   ],
   "scripts": {
     "test": "node --test",
-    "coverage": "c8 --all --include 'index.js' --include 'src/**/*.js' --reporter=text --reporter=lcov node --test",
-    "coverage:check": "c8 --all --include 'index.js' --include 'src/**/*.js' --reporter=text --reporter=lcov --check-coverage --statements 50 --branches 50 --functions 50 --lines 50 node --test",
+    "coverage": "c8 --all --include 'src/**/*.js' --exclude 'index.js' --reporter=text --reporter=lcov node --test",
+    "coverage:check": "c8 --all --include 'src/**/*.js' --exclude 'index.js' --reporter=text --reporter=lcov --check-coverage --statements 95 --branches 70 --functions 95 --lines 95 node --test",
     "check": "node --check index.js && node --check src/runtime.js && node --check src/group-workspace.js && node --check src/sync-group-goals.js && node --check src/onboard-discord-group.js && node --check src/audit-discord-group-runtime.js && node --check src/discussion-audits.js && node --check src/audit-discussion-lifecycle.js && node --check src/audit-communication-contracts.js && node --check src/audit-group-orchestration-rules.js && node --check src/self-check.js && node --check src/thread-bindings-maintenance.js && node --check src/agent-memory-distillation.js && node --check bin/clawclave.js && node --check test/runtime.test.js",
     "verify": "npm run check && npm test",
     "pack:dry-run": "npm pack --dry-run",

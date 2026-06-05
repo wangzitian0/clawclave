@@ -1543,6 +1543,7 @@ export function runCli(argv = process.argv.slice(2), root = repoRoot) {
   return 1;
 }
 
+/* c8 ignore next 3 */
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   process.exitCode = runCli();
 }

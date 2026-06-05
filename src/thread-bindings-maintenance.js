@@ -54,6 +54,7 @@ export function runCli(argv = process.argv.slice(2), root = repoRoot) {
   if (checkOnly && report.removed.length > 0) process.exit(1);
 }
 
+/* c8 ignore next 3 */
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   runCli();
 }

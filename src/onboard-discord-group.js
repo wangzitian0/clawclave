@@ -200,14 +200,14 @@ export function onboardGroup(root = repoRoot, opts) {
   return { group, created };
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+export function runCli(argv = process.argv.slice(2), root = repoRoot) {
   try {
-    const opts = parseArgs(process.argv.slice(2));
+    const opts = parseArgs(argv);
     if (opts.help) {
       console.log(usage());
-      process.exit(0);
+      return 0;
     }
-    const result = onboardGroup(repoRoot, opts);
+    const result = onboardGroup(root, opts);
     console.log(`Onboarded group ${result.group.slug} (${result.group.channelId})`);
     for (const path of result.created) {
       console.log(`- ${path}`);
@@ -218,10 +218,16 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     if (!opts.writeTopic) {
       console.log("Next: node scripts/sync-discord-topics.mjs --write");
     }
+    return 0;
   } catch (error) {
     console.error(error.message);
     console.error("");
     console.error(usage());
-    process.exit(1);
+    return 1;
   }
+}
+
+/* c8 ignore next 3 */
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = runCli();
 }

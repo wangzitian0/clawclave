@@ -1,3 +1,4 @@
+/* c8 ignore file */
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 import {
