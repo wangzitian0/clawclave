@@ -3,18 +3,18 @@
   "dirty_inputs": [],
   "inputs": {
     "repo": "e28d9f7a5fe6fd0095a0ac80fdb7bf99015c170f44c3c298e77d2c7a369147c1",
-    "root": "fea167b088b8a551163af962a67c9e411538481bff3d9a471912eaa8b1b9106c"
+    "root": "d696b51ac3e1200f9b002395df5333d5daa6d21c6819517e97f061dd5ed36c60"
   },
   "language": "en",
   "outputs": {
-    "AGENTS.md": "a32f1878a795533afa7b3279db245822b941c4075964aa8ba9095e6d3b89b7d7"
+    "AGENTS.md": "ea65c6577105fd601717ec002de4743270f4b89434668ccf524b54440b414ce1"
   },
   "profiles": [
     "code",
     "delivery"
   ],
   "schema": 2,
-  "source_revision": "e7dc248cb573521d04ce1a60d08fb00f49f09270",
+  "source_revision": "b9bd3defc65feb96fe7886f4d3c417bf5f83a488",
   "target": {
     "remote": "github.com/wangzitian0/clawclave",
     "repo": "clawclave",
